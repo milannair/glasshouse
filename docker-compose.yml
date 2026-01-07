@@ -1,8 +1,0 @@
-services:
-  glasshouse:
-    build: .
-    privileged: true
-    volumes:
-      - .:/workspace
-    command: run -- python3 demo/sneaky.py
-

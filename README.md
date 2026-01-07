@@ -25,6 +25,7 @@ For a beginner-friendly walkthrough, see `info.md`.
 
 ## Requirements (Linux)
 
+- Linux only. WSL is partially supported and may not work depending on kernel/verifier behavior.
 - Linux kernel with BTF enabled (`/sys/kernel/btf/vmlinux`) and ringbuf support (5.8+)
 - Go 1.21+
 - clang/llvm
@@ -45,19 +46,6 @@ Run a custom command:
 
 ```bash
 sudo ./scripts/run-wsl.sh -- python3 demo/sneaky.py
-```
-
-## Quick start (Docker for macOS/Windows)
-
-```bash
-docker-compose build
-docker-compose run --rm glasshouse
-```
-
-Run a custom command:
-
-```bash
-docker-compose run --rm glasshouse run -- python3 demo/sneaky.py
 ```
 
 ## Build (manual)
