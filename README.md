@@ -34,7 +34,10 @@ For a beginner-friendly walkthrough, see `info.md`.
 
 ### WSL notes
 
-WSL’s eBPF verifier is stricter. The argv-capture program is skipped by default on WSL to avoid verifier failures. You can force it, but it may fail.
+WSL support is partial:
+- Works: exec/file/net event capture (without argv) when the eBPF programs load successfully.
+- Doesn’t: argv capture by default; forcing it often fails verification.
+- Why: WSL uses a Microsoft kernel with a stricter eBPF verifier and different kernel config, so some programs or helpers are rejected.
 
 ## Quick start (Linux)
 
