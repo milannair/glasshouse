@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,13 +25,28 @@ type RunResult struct {
 	ExitCode int
 }
 
-func Run(ctx context.Context, cmdArgs []string) (RunResult, error) {
+type RunOptions struct {
+	Guest bool
+}
+
+func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, error) {
 	if len(cmdArgs) == 0 {
 		return RunResult{}, fmt.Errorf("no command provided")
 	}
 
+	extraErrors := []string{}
+	if opts.Guest {
+		extraErrors = append(extraErrors, setupGuestEnvironment()...)
+	}
+
 	start := time.Now()
-	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
+	runCtx := ctx
+	cancel := func() {}
+	if opts.Guest {
+		runCtx, cancel = context.WithCancel(ctx)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(runCtx, cmdArgs[0], cmdArgs[1:]...)
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
@@ -39,13 +56,15 @@ func Run(ctx context.Context, cmdArgs []string) (RunResult, error) {
 	collector, collectErr := audit.NewCollector(audit.Config{})
 	if collectErr != nil {
 		fmt.Fprintln(os.Stderr, "glasshouse:", collectErr)
+		extraErrors = append(extraErrors, fmt.Sprintf("collector: %v", collectErr))
 		collector = nil
 	}
 
 	agg := audit.NewAggregator()
 	if collector != nil {
-		if err := collector.Start(ctx); err != nil {
+		if err := collector.Start(runCtx); err != nil {
 			fmt.Fprintln(os.Stderr, "glasshouse:", err)
+			extraErrors = append(extraErrors, fmt.Sprintf("collector: %v", err))
 			_ = collector.Close()
 			collector = nil
 		}
@@ -56,12 +75,22 @@ func Run(ctx context.Context, cmdArgs []string) (RunResult, error) {
 			_ = collector.Close()
 		}
 		receipt := agg.Receipt(1, time.Since(start))
-		fillReceiptMeta(&receipt, start, 0, cmdArgs, workingDir, &stdoutBuf, &stderrBuf, err, audit.Resources{})
+		fillReceiptMeta(&receipt, start, 0, cmdArgs, workingDir, &stdoutBuf, &stderrBuf, err, extraErrors, audit.Resources{})
 		return RunResult{Receipt: receipt, ExitCode: 1}, err
 	}
 
 	rootCmd := strings.Join(cmdArgs, " ")
 	agg.SetRoot(uint32(cmd.Process.Pid), rootCmd)
+
+	var (
+		reapMu       sync.Mutex
+		mainReaped   bool
+		mainStatus   syscall.WaitStatus
+		shutdownSign os.Signal
+	)
+	if opts.Guest {
+		startGuestSignalHandler(runCtx, cmd.Process, &reapMu, &mainReaped, &mainStatus, &shutdownSign, cancel)
+	}
 
 	if collector != nil {
 		go func() {
@@ -83,15 +112,22 @@ func Run(ctx context.Context, cmdArgs []string) (RunResult, error) {
 	}
 
 	waitErr := cmd.Wait()
+	exitCode := 0
+	if waitErr != nil {
+		exitCode = exitCodeForError(waitErr)
+	}
+	reapMu.Lock()
+	if mainReaped {
+		exitCode = exitCodeFromStatus(mainStatus)
+		if waitErr != nil && isNoChildErr(waitErr) {
+			waitErr = nil
+		}
+	}
+	reapMu.Unlock()
 	duration := time.Since(start)
 
 	if collector != nil {
 		_ = collector.Close()
-	}
-
-	exitCode := 0
-	if waitErr != nil {
-		exitCode = exitCodeForError(waitErr)
 	}
 
 	resources := audit.Resources{}
@@ -112,7 +148,10 @@ func Run(ctx context.Context, cmdArgs []string) (RunResult, error) {
 	if resourcesAvailable {
 		receipt.Resources = &resources
 	}
-	fillReceiptMeta(&receipt, start, uint32(cmd.Process.Pid), cmdArgs, workingDir, &stdoutBuf, &stderrBuf, waitErr, resources)
+	if shutdownSign != nil {
+		extraErrors = append(extraErrors, fmt.Sprintf("signal: %s", shutdownSign.String()))
+	}
+	fillReceiptMeta(&receipt, start, uint32(cmd.Process.Pid), cmdArgs, workingDir, &stdoutBuf, &stderrBuf, waitErr, extraErrors, resources)
 	debugReceipt(&receipt)
 
 	return RunResult{Receipt: receipt, ExitCode: exitCode}, waitErr
@@ -127,16 +166,48 @@ func exitCodeForError(err error) int {
 	return 1
 }
 
-func fillReceiptMeta(receipt *audit.Receipt, start time.Time, pid uint32, cmdArgs []string, workingDir string, stdoutBuf, stderrBuf *bytes.Buffer, runErr error, resources audit.Resources) {
+func exitCodeFromStatus(status syscall.WaitStatus) int {
+	if status.Exited() {
+		return status.ExitStatus()
+	}
+	if status.Signaled() {
+		return 128 + int(status.Signal())
+	}
+	return 1
+}
+
+func isNoChildErr(err error) bool {
+	var errno syscall.Errno
+	if errors.As(err, &errno) && errno == syscall.ECHILD {
+		return true
+	}
+	var sysErr *os.SyscallError
+	if errors.As(err, &sysErr) && sysErr.Err == syscall.ECHILD {
+		return true
+	}
+	return false
+}
+
+func fillReceiptMeta(receipt *audit.Receipt, start time.Time, pid uint32, cmdArgs []string, workingDir string, stdoutBuf, stderrBuf *bytes.Buffer, runErr error, extraErrors []string, resources audit.Resources) {
 	receipt.ReceiptVersion = "v0.2"
 	receipt.ExecutionID = executionID(start, pid, cmdArgs)
 	receipt.Timestamp = start.UTC().Format(time.RFC3339Nano)
 
 	exitCode := receipt.ExitCode
+	errorStr := errorString(runErr)
+	if len(extraErrors) > 0 {
+		extra := strings.Join(extraErrors, "; ")
+		if errorStr == nil {
+			errorStr = &extra
+		} else {
+			combined := *errorStr + "; " + extra
+			errorStr = &combined
+		}
+	}
 	receipt.Outcome = &audit.Outcome{
 		ExitCode: exitCode,
 		Signal:   signalForError(runErr),
-		Error:    errorString(runErr),
+		Error:    errorStr,
 	}
 
 	receipt.Timing = &audit.Timing{
