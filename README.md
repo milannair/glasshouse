@@ -1,21 +1,29 @@
 # glasshouse
 
-Auditing-first execution runner for AI agents. This MVP observes system activity via eBPF and emits a JSON execution receipt.
+Auditing-first execution runner for AI agents. glasshouse runs a command, observes OS-level activity via eBPF, and emits a JSON execution receipt.
 
-## What it does
+## Why it exists
 
-- Executes an arbitrary command as a child process
-- Captures:
-  - process exec events
-  - process parent relationships (ppid)
-  - command line snapshots (argv, truncated)
-  - file open events (classified as read vs write by flags)
-  - outbound connect attempts
-- Aggregates events into `receipt.json`
+Most agents can explain what they intended to do, but not what actually happened on the machine. glasshouse captures what the OS observed: process execs, file opens, and outbound connects. It is a recorder, not an enforcer.
 
-No enforcement, no allow/deny lists, no sandboxing.
+## Features
 
-## Requirements (Linux only)
+- Run any command as a child process
+- Capture process execs and parent relationships
+- Track file opens (read vs write inferred from flags)
+- Track outbound connect attempts
+- Emit a single `receipt.json` artifact
+
+## How it works (short)
+
+1) eBPF programs attach to syscall tracepoints.
+2) Events are written to a ring buffer.
+3) A Go collector decodes events and aggregates them.
+4) The CLI writes a JSON receipt and exits with the child’s exit code.
+
+For a beginner-friendly walkthrough, see `info.md`.
+
+## Requirements (Linux)
 
 - Linux kernel with BTF enabled (`/sys/kernel/btf/vmlinux`) and ringbuf support (5.8+)
 - Go 1.21+
@@ -23,27 +31,36 @@ No enforcement, no allow/deny lists, no sandboxing.
 - bpftool
 - root or CAP_BPF/CAP_SYS_ADMIN to load eBPF programs
 
-**Note:** This project requires Linux. If you're on macOS or Windows, use Docker (see below).
+### WSL notes
 
-## Quick Start with Docker (macOS/Windows)
+WSL’s eBPF verifier is stricter. The argv-capture program is skipped by default on WSL to avoid verifier failures. You can force it, but it may fail.
 
-If you're on macOS or Windows, you can run this project using Docker:
+## Quick start (Linux)
 
 ```bash
-# Build and run
+sudo ./scripts/run-wsl.sh
+```
+
+Run a custom command:
+
+```bash
+sudo ./scripts/run-wsl.sh -- python3 demo/sneaky.py
+```
+
+## Quick start (Docker for macOS/Windows)
+
+```bash
 docker-compose build
 docker-compose run --rm glasshouse
 ```
 
-Or run a custom command:
+Run a custom command:
 
 ```bash
 docker-compose run --rm glasshouse run -- python3 demo/sneaky.py
 ```
 
-The `receipt.json` will be generated in the current directory.
-
-## Build
+## Build (manual)
 
 1) Generate `ebpf/vmlinux.h`:
 
@@ -71,8 +88,19 @@ sudo ./glasshouse run -- python3 demo/sneaky.py
 
 Outputs:
 
-- The child process stdout/stderr (streamed)
-- `receipt.json` (execution receipt)
+- child process stdout/stderr
+- `receipt.json`
+
+## Configuration
+
+- `GLASSHOUSE_BPF_DIR`: override the directory containing `exec.o`, `fs.o`, and `net.o`.
+- `GLASSHOUSE_CAPTURE_ARGV=1`: request argv capture (skipped on WSL).
+- `GLASSHOUSE_CAPTURE_ARGV=force`: force argv capture on WSL (may fail verification).
+
+WSL helpers:
+
+- `scripts/run-wsl.sh --capture-argv`
+- `scripts/run-wsl.sh --force-capture-argv`
 
 ## Receipt schema (v0)
 
@@ -99,16 +127,15 @@ Outputs:
 }
 ```
 
-## Notes and limitations
+## Troubleshooting
 
-- File paths are captured from `open/openat` arguments. Relative paths are recorded as-is.
-- Writes are inferred from open flags; actual write syscalls are not traced yet.
-- Network protocol is inferred from `socket` arguments; inherited sockets may show protocol as unknown.
-- Only `connect` attempts are tracked for outbound networking.
-- Process tree is inferred from exec events; very short-lived processes might be missed.
-- Command lines are captured from argv at exec time (first 8 args) and truncated to 256 bytes.
-- If eBPF objects are missing, the runner still executes but omits audit data.
+- `vmlinux.h` missing:
+  - `sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h`
+- eBPF verifier errors on WSL:
+  - use default exec capture (no argv) or `GLASSHOUSE_CAPTURE_ARGV=force`
+- no events:
+  - check tracefs is mounted and `ebpf/objects/*.o` exist
 
-## Configuration
+## Learn the project
 
-- `GLASSHOUSE_BPF_DIR`: override the directory containing `exec.o`, `fs.o`, and `net.o`.
+Start with the hands-on tutorial in `info.md`.

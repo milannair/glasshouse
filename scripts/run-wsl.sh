@@ -1,8 +1,8 @@
 #!/bin/bash
 #
 # Run glasshouse on WSL2
-# Usage: ./scripts/run-wsl.sh [command...]
-# Example: ./scripts/run-wsl.sh python3 demo/sneaky.py
+# Usage: ./scripts/run-wsl.sh [--capture-argv|--force-capture-argv] [command...]
+# Example: ./scripts/run-wsl.sh --force-capture-argv python3 demo/sneaky.py
 #
 set -e
 
@@ -26,6 +26,31 @@ if [ "$EUID" -ne 0 ]; then
     error "Please run with sudo: sudo $0 $*"
 fi
 
+# Optional flags
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --capture-argv)
+            export GLASSHOUSE_CAPTURE_ARGV=1
+            shift
+            ;;
+        --force-capture-argv)
+            export GLASSHOUSE_CAPTURE_ARGV=force
+            shift
+            ;;
+        --no-capture-argv)
+            export GLASSHOUSE_CAPTURE_ARGV=0
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
 # Get the directory of this script
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -38,6 +63,8 @@ install_deps() {
     log "Checking dependencies..."
     
     local packages_needed=""
+    local KERNEL_VERSION
+    KERNEL_VERSION=$(uname -r)
     
     command -v clang >/dev/null 2>&1 || packages_needed="$packages_needed clang"
     command -v llvm-strip >/dev/null 2>&1 || packages_needed="$packages_needed llvm"
@@ -45,9 +72,14 @@ install_deps() {
     [ -f /usr/include/libelf.h ] || packages_needed="$packages_needed libelf-dev"
     [ -f /usr/include/zlib.h ] || packages_needed="$packages_needed zlib1g-dev"
     [ -d /usr/include/bpf ] || packages_needed="$packages_needed libbpf-dev"
-    # Check for bpftool - try kernel-specific package for WSL2
-    if ! command -v bpftool >/dev/null 2>&1; then
-        local KERNEL_VERSION=$(uname -r)
+    # Check for bpftool - prefer kernel-specific package for WSL2
+    local BPFTOOL_KERNEL_PATH=""
+    if [ -x "/usr/lib/linux-tools/${KERNEL_VERSION}/bpftool" ]; then
+        BPFTOOL_KERNEL_PATH="/usr/lib/linux-tools/${KERNEL_VERSION}/bpftool"
+    elif [ -x "/usr/lib/linux-tools-${KERNEL_VERSION}/bpftool" ]; then
+        BPFTOOL_KERNEL_PATH="/usr/lib/linux-tools-${KERNEL_VERSION}/bpftool"
+    fi
+    if [ -z "$BPFTOOL_KERNEL_PATH" ]; then
         if grep -qi microsoft /proc/version 2>/dev/null; then
             # WSL2 - try to install kernel-specific package
             if apt-cache show "linux-tools-${KERNEL_VERSION}" >/dev/null 2>&1; then
@@ -76,15 +108,39 @@ install_deps() {
 install_go() {
     local GO_VERSION="1.21.5"
     local GO_INSTALLED=""
+    local GO_MIN="1.21"
+    local GOROOT_PATH=""
+    local GOOS=""
+    local GOARCH=""
     
     if command -v go >/dev/null 2>&1; then
         GO_INSTALLED=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+' || echo "0.0")
-        if [ "$(printf '%s\n' "1.21" "$GO_INSTALLED" | sort -V | head -n1)" = "1.21" ]; then
-            log "Go $GO_INSTALLED already installed"
-            return
+        if [ "$(printf '%s\n' "$GO_MIN" "$GO_INSTALLED" | sort -V | head -n1)" = "$GO_MIN" ]; then
+            GOROOT_PATH=$(go env GOROOT)
+            if [ "$GOROOT_PATH" = "/usr/local/go" ]; then
+                GOOS=$(go env GOOS)
+                GOARCH=$(go env GOARCH)
+                if [ ! -d "${GOROOT_PATH}/pkg/${GOOS}_${GOARCH}" ]; then
+                    warn "Go $GO_INSTALLED found but stdlib cache missing; installing distro Go"
+                else
+                    log "Go $GO_INSTALLED already installed"
+                    return
+                fi
+            else
+                log "Go $GO_INSTALLED already installed"
+                return
+            fi
         fi
     fi
-    
+
+    if apt-cache show golang-go >/dev/null 2>&1; then
+        log "Installing Go from distro packages..."
+        apt-get update
+        apt-get install -y golang-go
+        log "Go $(go version) installed"
+        return
+    fi
+
     log "Installing Go $GO_VERSION..."
     
     # Detect architecture
@@ -123,24 +179,34 @@ mount_tracefs() {
 
 # Generate vmlinux.h
 generate_vmlinux() {
-    if [ -f ebpf/vmlinux.h ]; then
+    if [ -s ebpf/vmlinux.h ]; then
         log "vmlinux.h already exists"
         return
+    fi
+
+    if [ -f ebpf/vmlinux.h ]; then
+        warn "vmlinux.h exists but is empty; regenerating..."
+        rm -f ebpf/vmlinux.h
     fi
     
     log "Generating vmlinux.h..."
     
     # Try different bpftool locations
     local BPFTOOL=""
-    if command -v bpftool >/dev/null 2>&1; then
-        BPFTOOL="bpftool"
+    local KERNEL_VERSION
+    KERNEL_VERSION=$(uname -r)
+    if [ -x "/usr/lib/linux-tools/${KERNEL_VERSION}/bpftool" ]; then
+        BPFTOOL="/usr/lib/linux-tools/${KERNEL_VERSION}/bpftool"
+    elif [ -x "/usr/lib/linux-tools-${KERNEL_VERSION}/bpftool" ]; then
+        BPFTOOL="/usr/lib/linux-tools-${KERNEL_VERSION}/bpftool"
     elif [ -f /usr/lib/linux-tools/*/bpftool ]; then
         BPFTOOL=$(ls /usr/lib/linux-tools/*/bpftool | head -1)
     elif [ -f /usr/lib/linux-tools-*/bpftool ]; then
         BPFTOOL=$(ls /usr/lib/linux-tools-*/bpftool 2>/dev/null | head -1)
+    elif command -v bpftool >/dev/null 2>&1; then
+        BPFTOOL="bpftool"
     else
         # Try to install kernel-specific package
-        local KERNEL_VERSION=$(uname -r)
         if grep -qi microsoft /proc/version 2>/dev/null; then
             warn "bpftool not found. Attempting to install kernel-specific package..."
             if apt-cache show "linux-tools-${KERNEL_VERSION}" >/dev/null 2>&1; then
@@ -167,7 +233,19 @@ generate_vmlinux() {
 
 # Build eBPF programs
 build_ebpf() {
-    if [ -f ebpf/objects/exec.o ] && [ -f ebpf/objects/fs.o ] && [ -f ebpf/objects/net.o ]; then
+    local rebuild=false
+    local objs=(exec exec-argv fs net)
+    for name in "${objs[@]}"; do
+        if [ ! -f "ebpf/objects/${name}.o" ]; then
+            rebuild=true
+            break
+        fi
+        if [ "ebpf/${name}.c" -nt "ebpf/objects/${name}.o" ]; then
+            rebuild=true
+            break
+        fi
+    done
+    if [ "$rebuild" = false ]; then
         log "eBPF objects already built"
         return
     fi
@@ -179,8 +257,10 @@ build_ebpf() {
 # Build the CLI
 build_cli() {
     if [ -f glasshouse ]; then
-        log "glasshouse binary already exists"
-        return
+        if ! find . -name '*.go' -newer glasshouse -print -quit | grep -q .; then
+            log "glasshouse binary already exists"
+            return
+        fi
     fi
     
     log "Building glasshouse CLI..."
@@ -219,4 +299,3 @@ main() {
 }
 
 main "$@"
-

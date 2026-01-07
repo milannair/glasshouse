@@ -27,6 +27,7 @@ COMMON_FLAGS=(
 )
 
 clang "${COMMON_FLAGS[@]}" -c "$ROOT_DIR/ebpf/exec.c" -o "$OBJ_DIR/exec.o"
+clang "${COMMON_FLAGS[@]}" -c "$ROOT_DIR/ebpf/exec_argv.c" -o "$OBJ_DIR/exec-argv.o"
 clang "${COMMON_FLAGS[@]}" -c "$ROOT_DIR/ebpf/fs.c" -o "$OBJ_DIR/fs.o"
 clang "${COMMON_FLAGS[@]}" -c "$ROOT_DIR/ebpf/net.c" -o "$OBJ_DIR/net.o"
 

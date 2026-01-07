@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/cilium/ebpf"
@@ -44,8 +45,14 @@ func NewCollector(cfg Config) (Collector, error) {
 		}
 	}
 
-	paths := []string{
-		filepath.Join(dir, "exec.o"),
+	execPaths := []string{filepath.Join(dir, "exec.o")}
+	if captureArgvEnabled() {
+		execPaths = []string{
+			filepath.Join(dir, "exec-argv.o"),
+			filepath.Join(dir, "exec.o"),
+		}
+	}
+	otherPaths := []string{
 		filepath.Join(dir, "fs.o"),
 		filepath.Join(dir, "net.o"),
 	}
@@ -60,14 +67,14 @@ func NewCollector(cfg Config) (Collector, error) {
 	var loadErrors []error
 	cwd, _ := os.Getwd()
 	fmt.Fprintf(os.Stderr, "glasshouse: loading eBPF objects from dir=%s (cwd=%s)\n", dir, cwd)
-	for _, path := range paths {
+	loadPath := func(path string) bool {
 		// Debug: check if file exists
 		absPath, _ := filepath.Abs(path)
 		if _, err := os.Stat(path); err != nil {
 			fmt.Fprintf(os.Stderr, "glasshouse: file not found: %s (abs: %s) - %v\n", path, absPath, err)
 			loadErrors = append(loadErrors, fmt.Errorf("file not found: %s (%w)", path, err))
 			collector.errs <- fmt.Errorf("eBPF object missing: %s", path)
-			continue
+			return false
 		}
 		fmt.Fprintf(os.Stderr, "glasshouse: attempting to load: %s\n", path)
 		coll, readers, links, err := loadObject(path)
@@ -75,13 +82,28 @@ func NewCollector(cfg Config) (Collector, error) {
 			fmt.Fprintf(os.Stderr, "glasshouse: load failed for %s: %v\n", path, err)
 			loadErrors = append(loadErrors, err)
 			collector.errs <- err
-			continue
+			return false
 		}
 		fmt.Fprintf(os.Stderr, "glasshouse: successfully loaded: %s\n", path)
 		collector.objs = append(collector.objs, coll)
 		collector.readers = append(collector.readers, readers...)
 		collector.links = append(collector.links, links...)
 		loaded++
+		return true
+	}
+
+	execLoaded := false
+	for _, path := range execPaths {
+		if loadPath(path) {
+			execLoaded = true
+			break
+		}
+	}
+	if !execLoaded {
+		fmt.Fprintln(os.Stderr, "glasshouse: exec eBPF program not loaded; exec events will be missing")
+	}
+	for _, path := range otherPaths {
+		_ = loadPath(path)
 	}
 
 	if loaded == 0 {
@@ -255,6 +277,20 @@ func loadObject(path string) (*ebpf.Collection, []*ringbuf.Reader, []link.Link, 
 			return nil, nil, nil, err
 		}
 		links = append(links, link2)
+	case "exec-argv.o":
+		link1, err := attachTracepoint(coll, "trace_execve", "syscalls", "sys_enter_execve")
+		if err != nil {
+			coll.Close()
+			return nil, nil, nil, err
+		}
+		links = append(links, link1)
+
+		link2, err := attachTracepoint(coll, "trace_execveat", "syscalls", "sys_enter_execveat")
+		if err != nil {
+			coll.Close()
+			return nil, nil, nil, err
+		}
+		links = append(links, link2)
 	case "fs.o":
 		link1, err := attachTracepoint(coll, "trace_openat", "syscalls", "sys_enter_openat")
 		if err != nil {
@@ -293,6 +329,44 @@ func loadObject(path string) (*ebpf.Collection, []*ringbuf.Reader, []link.Link, 
 	}
 
 	return coll, readers, links, nil
+}
+
+func captureArgvEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("GLASSHOUSE_CAPTURE_ARGV")))
+	if value == "" || value == "0" || value == "false" || value == "no" {
+		return false
+	}
+
+	if isWSL() && value != "force" && !isTruthy(os.Getenv("GLASSHOUSE_CAPTURE_ARGV_FORCE")) {
+		fmt.Fprintln(os.Stderr, "glasshouse: argv capture disabled on WSL; set GLASSHOUSE_CAPTURE_ARGV=force to override")
+		return false
+	}
+
+	return true
+}
+
+func isTruthy(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "1", "true", "yes", "on", "force":
+		return true
+	default:
+		return false
+	}
+}
+
+func isWSL() bool {
+	if data, err := os.ReadFile("/proc/version"); err == nil {
+		if strings.Contains(strings.ToLower(string(data)), "microsoft") {
+			return true
+		}
+	}
+	if data, err := os.ReadFile("/proc/sys/kernel/osrelease"); err == nil {
+		if strings.Contains(strings.ToLower(string(data)), "microsoft") {
+			return true
+		}
+	}
+	return false
 }
 
 func attachTracepoint(coll *ebpf.Collection, progName, category, name string) (link.Link, error) {
