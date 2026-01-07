@@ -8,6 +8,7 @@ glasshouse
 ebpf/objects/
 ebpf/vmlinux.h
 receipt.json
+receipt-expected.json
 
 # Go
 *.test

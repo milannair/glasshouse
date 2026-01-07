@@ -35,9 +35,9 @@ For a beginner-friendly walkthrough, see `info.md`.
 ### WSL notes
 
 WSL support is partial:
-- Works: exec/file/net event capture (without argv) when the eBPF programs load successfully.
-- Doesn’t: argv capture by default; forcing it often fails verification.
-- Why: WSL uses a Microsoft kernel with a stricter eBPF verifier and different kernel config, so some programs or helpers are rejected.
+- Expected gaps on WSL: argv capture, syscall counts, filesystem reads/writes, network attempts, and child-process events may be missing or empty even when eBPF objects load.
+- Why: WSL uses a Microsoft kernel with stricter eBPF verifier rules and different tracepoint/feature support, so programs may load but event delivery can be incomplete.
+- Practical note: glasshouse is aimed at native Linux; WSL can run the CLI but may not produce a complete receipt.
 
 ## Quick start (Linux)
 
