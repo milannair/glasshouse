@@ -45,7 +45,22 @@ install_deps() {
     [ -f /usr/include/libelf.h ] || packages_needed="$packages_needed libelf-dev"
     [ -f /usr/include/zlib.h ] || packages_needed="$packages_needed zlib1g-dev"
     [ -d /usr/include/bpf ] || packages_needed="$packages_needed libbpf-dev"
-    command -v bpftool >/dev/null 2>&1 || packages_needed="$packages_needed linux-tools-generic"
+    # Check for bpftool - try kernel-specific package for WSL2
+    if ! command -v bpftool >/dev/null 2>&1; then
+        local KERNEL_VERSION=$(uname -r)
+        if grep -qi microsoft /proc/version 2>/dev/null; then
+            # WSL2 - try to install kernel-specific package
+            if apt-cache show "linux-tools-${KERNEL_VERSION}" >/dev/null 2>&1; then
+                packages_needed="$packages_needed linux-tools-${KERNEL_VERSION}"
+            elif apt-cache show "linux-tools-standard-WSL2" >/dev/null 2>&1; then
+                packages_needed="$packages_needed linux-tools-standard-WSL2"
+            else
+                packages_needed="$packages_needed linux-tools-generic"
+            fi
+        else
+            packages_needed="$packages_needed linux-tools-generic"
+        fi
+    fi
     command -v python3 >/dev/null 2>&1 || packages_needed="$packages_needed python3"
     
     if [ -n "$packages_needed" ]; then
@@ -121,8 +136,29 @@ generate_vmlinux() {
         BPFTOOL="bpftool"
     elif [ -f /usr/lib/linux-tools/*/bpftool ]; then
         BPFTOOL=$(ls /usr/lib/linux-tools/*/bpftool | head -1)
+    elif [ -f /usr/lib/linux-tools-*/bpftool ]; then
+        BPFTOOL=$(ls /usr/lib/linux-tools-*/bpftool 2>/dev/null | head -1)
     else
-        error "bpftool not found. Install with: apt install linux-tools-generic"
+        # Try to install kernel-specific package
+        local KERNEL_VERSION=$(uname -r)
+        if grep -qi microsoft /proc/version 2>/dev/null; then
+            warn "bpftool not found. Attempting to install kernel-specific package..."
+            if apt-cache show "linux-tools-${KERNEL_VERSION}" >/dev/null 2>&1; then
+                apt-get install -y "linux-tools-${KERNEL_VERSION}" 2>/dev/null || true
+            elif apt-cache show "linux-tools-standard-WSL2" >/dev/null 2>&1; then
+                apt-get install -y "linux-tools-standard-WSL2" 2>/dev/null || true
+            fi
+            # Try again after installation
+            if command -v bpftool >/dev/null 2>&1; then
+                BPFTOOL="bpftool"
+            elif [ -f /usr/lib/linux-tools-*/bpftool ]; then
+                BPFTOOL=$(ls /usr/lib/linux-tools-*/bpftool 2>/dev/null | head -1)
+            fi
+        fi
+        
+        if [ -z "$BPFTOOL" ]; then
+            error "bpftool not found. For WSL2, try: sudo apt install linux-tools-$(uname -r) or linux-tools-standard-WSL2"
+        fi
     fi
     
     $BPFTOOL btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h
