@@ -1,6 +1,8 @@
 #ifndef GLASSHOUSE_COMMON_H
 #define GLASSHOUSE_COMMON_H
 
+/* Include compat.h first for type definitions needed by libbpf headers */
+#include "compat.h"
 #include "vmlinux.h"
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_endian.h>
