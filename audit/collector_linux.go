@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -33,6 +34,7 @@ type ebpfCollector struct {
 	objs    []*ebpf.Collection
 	wg      sync.WaitGroup
 	closed  chan struct{}
+	debug   int32
 }
 
 func NewCollector(cfg Config) (Collector, error) {
@@ -61,6 +63,9 @@ func NewCollector(cfg Config) (Collector, error) {
 		events: make(chan Event, 1024),
 		errs:   make(chan error, 16),
 		closed: make(chan struct{}),
+	}
+	if isTruthy(os.Getenv("GLASSHOUSE_DEBUG_EVENTS")) {
+		collector.debug = 20
 	}
 
 	loaded := 0
@@ -197,6 +202,11 @@ func (c *ebpfCollector) readLoop(ctx context.Context, reader *ringbuf.Reader) {
 			case <-c.closed:
 			}
 			continue
+		}
+		if atomic.LoadInt32(&c.debug) > 0 {
+			if atomic.AddInt32(&c.debug, -1) >= 0 {
+				fmt.Fprintf(os.Stderr, "glasshouse: event type=%d pid=%d ppid=%d path=%q\n", ev.Type, ev.PID, ev.PPID, ev.Path)
+			}
 		}
 		select {
 		case c.events <- ev:

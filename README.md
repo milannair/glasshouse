@@ -102,30 +102,70 @@ WSL helpers:
 - `scripts/run-wsl.sh --capture-argv`
 - `scripts/run-wsl.sh --force-capture-argv`
 
-## Receipt schema (v0)
+## Receipt schema (v0.2)
 
 ```json
 {
+  "receipt_version": "v0.2",
+  "execution_id": "<stable unique id>",
+  "timestamp": "<RFC3339 timestamp>",
+  "outcome": {
+    "exit_code": 0,
+    "signal": null,
+    "error": null
+  },
+  "timing": {
+    "duration_ms": 312,
+    "cpu_time_ms": 3
+  },
+  "process_tree": [
+    {
+      "pid": 123,
+      "ppid": 1,
+      "exe": "/usr/bin/python3",
+      "argv": ["python3", "demo/sneaky.py"],
+      "working_dir": "/work"
+    }
+  ],
+  "filesystem": {
+    "reads": ["/work/input.txt"],
+    "writes": ["/work/output.txt"],
+    "deletes": [],
+    "policy_violations": []
+  },
+  "network": {
+    "attempts": [
+      { "dst": "1.2.3.4:443", "protocol": "tcp", "result": "attempted" }
+    ],
+    "bytes_sent": 0,
+    "bytes_received": 0
+  },
+  "syscalls": {
+    "counts": {},
+    "denied": []
+  },
+  "resources": {
+    "max_rss_kb": 8124
+  },
+  "environment": {
+    "runtime": "python3.x",
+    "os": "linux",
+    "arch": "amd64",
+    "sandbox": { "network": "enabled" }
+  },
+  "artifacts": {
+    "stdout_hash": "<sha256>",
+    "stderr_hash": "<sha256>"
+  },
   "exit_code": 0,
   "duration_ms": 312,
   "processes": [
     { "pid": 123, "ppid": 1, "cmd": "python3 demo/sneaky.py" }
-  ],
-  "filesystem": {
-    "read": ["/work/input.txt"],
-    "written": ["/work/output.txt"]
-  },
-  "network": {
-    "connections": [
-      { "dst": "1.2.3.4:443", "protocol": "tcp", "attempted": true }
-    ]
-  },
-  "resources": {
-    "cpu_time_ms": 3,
-    "max_rss_kb": 8124
-  }
+  ]
 }
 ```
+
+Legacy fields (`exit_code`, `duration_ms`, `processes`, `filesystem.read`, `filesystem.written`, `network.connections`) are preserved for backward compatibility.
 
 ## Troubleshooting
 

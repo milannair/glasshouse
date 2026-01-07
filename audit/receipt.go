@@ -1,9 +1,12 @@
 package audit
 
 import (
+	"fmt"
 	"net"
+	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -17,6 +20,10 @@ type Aggregator struct {
 	fsRead    map[string]struct{}
 	fsWrite   map[string]struct{}
 	netConns  map[string]Connection
+	syscalls  map[string]int
+	debug     bool
+	seen      int
+	tracked   int
 }
 
 func NewAggregator() *Aggregator {
@@ -26,6 +33,8 @@ func NewAggregator() *Aggregator {
 		fsRead:    make(map[string]struct{}),
 		fsWrite:   make(map[string]struct{}),
 		netConns:  make(map[string]Connection),
+		syscalls:  make(map[string]int),
+		debug:     isTruthyEnv("GLASSHOUSE_DEBUG_TRACKING"),
 	}
 }
 
@@ -42,6 +51,7 @@ func (a *Aggregator) HandleEvent(ev Event) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	a.seen++
 	if a.rootPID == 0 {
 		return
 	}
@@ -53,6 +63,7 @@ func (a *Aggregator) HandleEvent(ev Event) {
 	if !tracked {
 		return
 	}
+	a.tracked++
 
 	a.pids[ev.PID] = struct{}{}
 
@@ -67,6 +78,7 @@ func (a *Aggregator) HandleEvent(ev Event) {
 
 	switch ev.Type {
 	case EventExec:
+		a.syscalls["execve"]++
 		cmd := ev.Path
 		if cmd == "" {
 			cmd = ev.Comm
@@ -83,6 +95,7 @@ func (a *Aggregator) HandleEvent(ev Event) {
 		}
 		a.processes[ev.PID] = entry
 	case EventOpen:
+		a.syscalls["open"]++
 		path := ev.Path
 		if path == "" {
 			return
@@ -93,6 +106,7 @@ func (a *Aggregator) HandleEvent(ev Event) {
 			a.fsRead[path] = struct{}{}
 		}
 	case EventConnect:
+		a.syscalls["connect"]++
 		dst := formatAddr(ev)
 		if dst != "" {
 			proto := protoString(ev.Proto)
@@ -106,6 +120,8 @@ func (a *Aggregator) Receipt(exitCode int, duration time.Duration) Receipt {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	a.debugSummary()
+
 	processes := make([]ProcessEntry, 0, len(a.processes))
 	for _, entry := range a.processes {
 		processes = append(processes, entry)
@@ -114,24 +130,48 @@ func (a *Aggregator) Receipt(exitCode int, duration time.Duration) Receipt {
 
 	read := setToSortedSlice(a.fsRead)
 	written := setToSortedSlice(a.fsWrite)
-	var fs *FilesystemInfo
-	if len(read) > 0 || len(written) > 0 {
-		fs = &FilesystemInfo{Read: read, Written: written}
+	if read == nil {
+		read = []string{}
+	}
+	if written == nil {
+		written = []string{}
+	}
+	fs := &FilesystemInfo{
+		Read:             read,
+		Written:          written,
+		Reads:            read,
+		Writes:           written,
+		Deletes:          []string{},
+		PolicyViolations: []string{},
 	}
 
-	var netInfo *NetworkInfo
-	if len(a.netConns) > 0 {
-		connections := make([]Connection, 0, len(a.netConns))
-		for _, conn := range a.netConns {
-			connections = append(connections, conn)
-		}
-		sort.Slice(connections, func(i, j int) bool {
-			if connections[i].Dst == connections[j].Dst {
-				return connections[i].Protocol < connections[j].Protocol
-			}
-			return connections[i].Dst < connections[j].Dst
+	connections := make([]Connection, 0, len(a.netConns))
+	attempts := make([]NetworkAttempt, 0, len(a.netConns))
+	for _, conn := range a.netConns {
+		connections = append(connections, conn)
+		attempts = append(attempts, NetworkAttempt{
+			Dst:      conn.Dst,
+			Protocol: conn.Protocol,
+			Result:   "attempted",
 		})
-		netInfo = &NetworkInfo{Connections: connections}
+	}
+	sort.Slice(connections, func(i, j int) bool {
+		if connections[i].Dst == connections[j].Dst {
+			return connections[i].Protocol < connections[j].Protocol
+		}
+		return connections[i].Dst < connections[j].Dst
+	})
+	sort.Slice(attempts, func(i, j int) bool {
+		if attempts[i].Dst == attempts[j].Dst {
+			return attempts[i].Protocol < attempts[j].Protocol
+		}
+		return attempts[i].Dst < attempts[j].Dst
+	})
+	netInfo := &NetworkInfo{
+		Connections:   connections,
+		Attempts:      attempts,
+		BytesSent:     0,
+		BytesReceived: 0,
 	}
 
 	return Receipt{
@@ -140,7 +180,36 @@ func (a *Aggregator) Receipt(exitCode int, duration time.Duration) Receipt {
 		Processes:  processes,
 		Filesystem: fs,
 		Network:    netInfo,
+		Syscalls: &SyscallInfo{
+			Counts: copyCounts(a.syscalls),
+			Denied: []string{},
+		},
 	}
+}
+
+func copyCounts(counts map[string]int) map[string]int {
+	out := make(map[string]int, len(counts))
+	for key, value := range counts {
+		out[key] = value
+	}
+	return out
+}
+
+func isTruthyEnv(key string) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch value {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *Aggregator) debugSummary() {
+	if !a.debug {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "glasshouse: tracking root_pid=%d seen=%d tracked=%d\n", a.rootPID, a.seen, a.tracked)
 }
 
 func setToSortedSlice(set map[string]struct{}) []string {
