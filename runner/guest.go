@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"sync"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func setupGuestEnvironment() []string {
@@ -55,15 +57,15 @@ func mountIfNeeded(source, target, fstype string) error {
 }
 
 func setMemlockUnlimited() error {
-	limit := &syscall.Rlimit{Cur: syscall.RLIM_INFINITY, Max: syscall.RLIM_INFINITY}
-	if err := syscall.Setrlimit(syscall.RLIMIT_MEMLOCK, limit); err != nil {
+	limit := &unix.Rlimit{Cur: unix.RLIM_INFINITY, Max: unix.RLIM_INFINITY}
+	if err := unix.Setrlimit(unix.RLIMIT_MEMLOCK, limit); err != nil {
 		return err
 	}
 	logGuest("set RLIMIT_MEMLOCK=unlimited")
 	return nil
 }
 
-func startGuestSignalHandler(ctx context.Context, proc *os.Process, reapMu *sync.Mutex, mainReaped *bool, mainStatus *syscall.WaitStatus, shutdownSign *os.Signal, cancel context.CancelFunc) {
+func startGuestSignalHandler(ctx context.Context, proc *os.Process, reapMu *sync.Mutex, mainReaped *bool, mainStatus *syscall.WaitStatus, shutdownSign *os.Signal) {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGCHLD)
 	go func() {
@@ -84,7 +86,6 @@ func startGuestSignalHandler(ctx context.Context, proc *os.Process, reapMu *sync
 					if proc != nil {
 						_ = proc.Signal(sig)
 					}
-					cancel()
 				}
 			}
 		}

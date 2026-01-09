@@ -40,13 +40,14 @@ func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, err
 	}
 
 	start := time.Now()
-	runCtx := ctx
-	cancel := func() {}
-	if opts.Guest {
-		runCtx, cancel = context.WithCancel(ctx)
-		defer cancel()
+	handleSignals := opts.Guest || os.Getpid() == 1
+	signalCtx := ctx
+	signalCancel := func() {}
+	if handleSignals {
+		signalCtx, signalCancel = context.WithCancel(ctx)
+		defer signalCancel()
 	}
-	cmd := exec.CommandContext(runCtx, cmdArgs[0], cmdArgs[1:]...)
+	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
 	var stdoutBuf bytes.Buffer
 	var stderrBuf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
@@ -62,7 +63,7 @@ func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, err
 
 	agg := audit.NewAggregator()
 	if collector != nil {
-		if err := collector.Start(runCtx); err != nil {
+		if err := collector.Start(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "glasshouse:", err)
 			extraErrors = append(extraErrors, fmt.Sprintf("collector: %v", err))
 			_ = collector.Close()
@@ -88,8 +89,8 @@ func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, err
 		mainStatus   syscall.WaitStatus
 		shutdownSign os.Signal
 	)
-	if opts.Guest {
-		startGuestSignalHandler(runCtx, cmd.Process, &reapMu, &mainReaped, &mainStatus, &shutdownSign, cancel)
+	if handleSignals {
+		startGuestSignalHandler(signalCtx, cmd.Process, &reapMu, &mainReaped, &mainStatus, &shutdownSign)
 	}
 
 	if collector != nil {
