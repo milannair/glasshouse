@@ -1,42 +1,51 @@
 # Working State
 
-Updated: 2026-01-09T05:57:09Z
+Updated: 2026-01-09T07:08:05Z
 
 ## Repository Map
+- `backend/` defines the execution backend interface and the process backend implementation.
 - `cmd/glasshouse/` is the CLI entrypoint that parses arguments and writes `receipt.json`.
-- `runner/` owns process execution, signal handling, receipt metadata, and resources.
+- `runner/` orchestrates backend lifecycle, audit collection, and receipt metadata assembly.
 - `audit/` defines the collector interface, event types, receipt schema, and the in-memory aggregator.
 - `ebpf/` contains the BPF programs (exec, fs, net), shared headers, and build artifacts.
 - `scripts/` contains build and WSL setup helpers; `demo/` is the activity generator.
 
 ## System Overview
 - glasshouse runs a command, observes OS-level activity via eBPF tracepoints, and emits a JSON receipt.
+- Execution is mediated by a backend that handles process startup, waiting, and cleanup.
 - Events flow from BPF programs into a ring buffer, then into a Go collector and an aggregator.
 - The aggregator scopes events to the root PID and its descendants and builds derived summaries.
 - The CLI exits with the child exit code and persists a single `receipt.json` artifact.
 
+## Backend Abstraction (`backend/`)
+- `Backend` defines Prepare/Start/Wait/Cleanup plus `Metadata()` for receipt enrichment.
+- `BackendMetadata` includes `backend` and `isolation` values (process/none today).
+- `processBackend` wraps `exec.CommandContext` and preserves existing signal + wait semantics.
+- Optional interfaces expose stdout/stderr buffers and process state for receipts and resources.
+
 ## CLI Behavior (`cmd/glasshouse/main.go`)
 - Command syntax is `glasshouse run [--guest] -- <command> [args...]`; unknown flags error out.
-- `--guest` enables guest setup (mounts + memlock rlimit) before launching the command.
+- `--guest` selects the process backend with guest setup enabled; runner behavior is unchanged otherwise.
 - After execution, the CLI always attempts to write `receipt.json` to the CWD.
 - Exit code mirrors the child exit code; if an error occurs before exit code is set, it returns 1.
 
 ## Runner Execution Flow (`runner/run.go`)
-- `Run` starts the child process with `exec.CommandContext`, capturing stdout/stderr to buffers.
+- `Run` accepts a backend, calls Prepare -> Start -> Wait -> Cleanup, and records any backend errors.
 - An `audit.Collector` is created if available; errors are recorded but do not prevent execution.
-- The aggregator is rooted at the child PID and consumes events on collector channels.
-- Signal handling is enabled in guest mode or when PID 1, with a dedicated signal context.
-- Exit code uses `WaitStatus` and handles the guest reaper path to avoid ECHILD issues.
+- The aggregator is rooted at the backend-returned PID and consumes events on collector channels.
+- Receipt metadata uses backend-provided stdout/stderr buffers for hashing.
+- Resource usage (CPU time, max RSS) is taken from backend process state when available.
 
-## Guest Mode and Signals (`runner/guest.go`)
+## Guest Mode and Signals (`backend/guest.go`, `backend/process.go`)
 - Guest setup mounts `proc`, `sysfs`, and `bpf` filesystems if missing and raises memlock.
 - Memlock uses `golang.org/x/sys/unix` to set RLIMIT_MEMLOCK to infinity.
-- A signal handler watches SIGCHLD to reap children and SIGTERM/SIGINT to forward shutdown.
-- Shutdown signals are recorded into receipt errors for visibility.
+- Signal handling is enabled when running as guest or PID 1 and reaps children on SIGCHLD.
+- SIGTERM/SIGINT are forwarded to the child and reported in receipt errors.
 
 ## Receipt Assembly (`audit/receipt.go`, `runner/run.go`)
 - `audit.Aggregator` tracks process tree, file reads/writes, network attempts, and syscall counts.
 - Receipt v0.2 includes `outcome`, `timing`, `process_tree`, `environment`, and `artifacts`.
+- New `execution` block records backend metadata (`backend`, `isolation`) for v0.3 prep.
 - Legacy fields (`exit_code`, `duration_ms`, `processes`, `filesystem`, `network`) are preserved.
 - `execution_id` is a hash of timestamp, PID, and argv; stdout/stderr hashes are SHA256.
 - Runtime name is inferred from argv (e.g., `python3.x` for python3).
@@ -77,6 +86,7 @@ Updated: 2026-01-09T05:57:09Z
 - When no activity occurs, filesystem/network/syscall sections are empty but present.
 - Network is reported as attempts, not byte counts (bytes are always 0 today).
 - Filesystem read/write inference is derived from open flags.
+- Receipts now include an `execution` section with backend metadata.
 
 ## Platform Constraints
 - Linux only; WSL is partially supported and may miss argv, syscalls, or IO events.
@@ -84,16 +94,18 @@ Updated: 2026-01-09T05:57:09Z
 - Root or CAP_BPF/CAP_SYS_ADMIN is needed to load BPF programs.
 
 ## Recent Changes (feature/guest)
-- `runner/guest.go` uses `golang.org/x/sys/unix` for RLIMIT_MEMLOCK.
-- Signal handling now avoids canceling the run context while still forwarding shutdown.
-- Signal handling is enabled when running as guest or PID 1.
+- Added backend abstraction and process backend with guest setup and signal handling.
+- Runner now orchestrates backend lifecycle and pulls output/resources from the backend.
+- Receipt now includes an `execution` block with backend and isolation metadata.
 
 ## Repository Status
 - Branch: `feature/guest`.
-- Receipt schema: v0.2 (legacy fields preserved for backward compatibility).
+- Receipt schema: v0.2 plus execution metadata (v0.3 prep).
+- Working tree: modified (backend refactor in progress).
 
 ## Verification
 - Manual: `/bin/does-not-exist` run returns `exit_code: 1` with missing binary error (user run).
+- Manual: receipt includes `execution.backend=process` and `execution.isolation=none` after rebuild (user run).
 
 ## Tests
 - Not run.

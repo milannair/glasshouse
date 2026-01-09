@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"glasshouse/backend"
 	"glasshouse/runner"
 )
 
@@ -27,7 +28,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	result, err := runner.Run(context.Background(), cmdArgs, opts)
+	execBackend := backend.NewProcessBackend(backend.ProcessOptions{Guest: opts.Guest})
+	result, err := runner.Run(context.Background(), cmdArgs, execBackend)
 	writeErr := writeReceipt(result.Receipt)
 	if writeErr != nil {
 		fmt.Fprintln(os.Stderr, "glasshouse:", writeErr)
@@ -42,8 +44,12 @@ func main() {
 	}
 }
 
-func parseRunArgs(args []string) (runner.RunOptions, []string, error) {
-	opts := runner.RunOptions{}
+type runOptions struct {
+	Guest bool
+}
+
+func parseRunArgs(args []string) (runOptions, []string, error) {
+	opts := runOptions{}
 	if len(args) == 0 {
 		return opts, nil, nil
 	}

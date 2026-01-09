@@ -1,23 +1,20 @@
 package runner
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"glasshouse/audit"
+	"glasshouse/backend"
 )
 
 type RunResult struct {
@@ -25,33 +22,20 @@ type RunResult struct {
 	ExitCode int
 }
 
-type RunOptions struct {
-	Guest bool
-}
-
-func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, error) {
+func Run(ctx context.Context, cmdArgs []string, execBackend backend.Backend) (RunResult, error) {
 	if len(cmdArgs) == 0 {
 		return RunResult{}, fmt.Errorf("no command provided")
 	}
 
+	if execBackend == nil {
+		return RunResult{}, fmt.Errorf("no backend provided")
+	}
 	extraErrors := []string{}
-	if opts.Guest {
-		extraErrors = append(extraErrors, setupGuestEnvironment()...)
+	if err := execBackend.Prepare(ctx); err != nil {
+		extraErrors = appendBackendErrors(extraErrors, err)
 	}
 
 	start := time.Now()
-	handleSignals := opts.Guest || os.Getpid() == 1
-	signalCtx := ctx
-	signalCancel := func() {}
-	if handleSignals {
-		signalCtx, signalCancel = context.WithCancel(ctx)
-		defer signalCancel()
-	}
-	cmd := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...)
-	var stdoutBuf bytes.Buffer
-	var stderrBuf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &stdoutBuf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
 	workingDir, _ := os.Getwd()
 
 	collector, collectErr := audit.NewCollector(audit.Config{})
@@ -71,27 +55,22 @@ func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, err
 		}
 	}
 
-	if err := cmd.Start(); err != nil {
+	rootPID, err := execBackend.Start(ctx, cmdArgs)
+	if err != nil {
 		if collector != nil {
 			_ = collector.Close()
 		}
+		if cleanupErr := execBackend.Cleanup(ctx); cleanupErr != nil {
+			extraErrors = append(extraErrors, fmt.Sprintf("backend: %v", cleanupErr))
+		}
 		receipt := agg.Receipt(1, time.Since(start))
-		fillReceiptMeta(&receipt, start, 0, cmdArgs, workingDir, &stdoutBuf, &stderrBuf, err, extraErrors, audit.Resources{})
+		stdoutBytes, stderrBytes := backendOutput(execBackend)
+		fillReceiptMeta(&receipt, start, 0, cmdArgs, workingDir, stdoutBytes, stderrBytes, err, extraErrors, audit.Resources{}, execBackend.Metadata())
 		return RunResult{Receipt: receipt, ExitCode: 1}, err
 	}
 
 	rootCmd := strings.Join(cmdArgs, " ")
-	agg.SetRoot(uint32(cmd.Process.Pid), rootCmd)
-
-	var (
-		reapMu       sync.Mutex
-		mainReaped   bool
-		mainStatus   syscall.WaitStatus
-		shutdownSign os.Signal
-	)
-	if handleSignals {
-		startGuestSignalHandler(signalCtx, cmd.Process, &reapMu, &mainReaped, &mainStatus, &shutdownSign)
-	}
+	agg.SetRoot(uint32(rootPID), rootCmd)
 
 	if collector != nil {
 		go func() {
@@ -112,35 +91,32 @@ func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, err
 		}()
 	}
 
-	waitErr := cmd.Wait()
-	exitCode := 0
-	if waitErr != nil {
-		exitCode = exitCodeForError(waitErr)
-	}
-	reapMu.Lock()
-	if mainReaped {
-		exitCode = exitCodeFromStatus(mainStatus)
-		if waitErr != nil && isNoChildErr(waitErr) {
-			waitErr = nil
-		}
-	}
-	reapMu.Unlock()
+	exitCode, waitErr := execBackend.Wait(ctx)
 	duration := time.Since(start)
 
 	if collector != nil {
 		_ = collector.Close()
 	}
 
+	if cleanupErr := execBackend.Cleanup(ctx); cleanupErr != nil {
+		extraErrors = append(extraErrors, fmt.Sprintf("backend: %v", cleanupErr))
+	}
+	if extraProvider, ok := execBackend.(backend.ExtraErrorProvider); ok {
+		extraErrors = append(extraErrors, extraProvider.ExtraErrors()...)
+	}
+
 	resources := audit.Resources{}
 	resourcesAvailable := false
-	if ps := cmd.ProcessState; ps != nil {
-		cpu := ps.UserTime() + ps.SystemTime()
-		resources.CPUTimeMs = cpu.Milliseconds()
-		resourcesAvailable = true
+	if psProvider, ok := execBackend.(backend.ProcessStateProvider); ok {
+		if ps := psProvider.ProcessState(); ps != nil {
+			cpu := ps.UserTime() + ps.SystemTime()
+			resources.CPUTimeMs = cpu.Milliseconds()
+			resourcesAvailable = true
 
-		if runtime.GOOS == "linux" {
-			if usage, ok := ps.SysUsage().(*syscall.Rusage); ok {
-				resources.MaxRSSKB = int64(usage.Maxrss)
+			if runtime.GOOS == "linux" {
+				if usage, ok := ps.SysUsage().(*syscall.Rusage); ok {
+					resources.MaxRSSKB = int64(usage.Maxrss)
+				}
 			}
 		}
 	}
@@ -149,47 +125,37 @@ func Run(ctx context.Context, cmdArgs []string, opts RunOptions) (RunResult, err
 	if resourcesAvailable {
 		receipt.Resources = &resources
 	}
-	if shutdownSign != nil {
-		extraErrors = append(extraErrors, fmt.Sprintf("signal: %s", shutdownSign.String()))
-	}
-	fillReceiptMeta(&receipt, start, uint32(cmd.Process.Pid), cmdArgs, workingDir, &stdoutBuf, &stderrBuf, waitErr, extraErrors, resources)
+	stdoutBytes, stderrBytes := backendOutput(execBackend)
+	fillReceiptMeta(&receipt, start, uint32(rootPID), cmdArgs, workingDir, stdoutBytes, stderrBytes, waitErr, extraErrors, resources, execBackend.Metadata())
 	debugReceipt(&receipt)
 
 	return RunResult{Receipt: receipt, ExitCode: exitCode}, waitErr
 }
 
-func exitCodeForError(err error) int {
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-			return status.ExitStatus()
-		}
+func appendBackendErrors(extraErrors []string, err error) []string {
+	if err == nil {
+		return extraErrors
 	}
-	return 1
+	if list, ok := err.(backend.ErrorList); ok {
+		return append(extraErrors, list.Errors...)
+	}
+	if list, ok := err.(*backend.ErrorList); ok {
+		return append(extraErrors, list.Errors...)
+	}
+	return append(extraErrors, err.Error())
 }
 
-func exitCodeFromStatus(status syscall.WaitStatus) int {
-	if status.Exited() {
-		return status.ExitStatus()
+func backendOutput(execBackend backend.Backend) ([]byte, []byte) {
+	if execBackend == nil {
+		return nil, nil
 	}
-	if status.Signaled() {
-		return 128 + int(status.Signal())
+	if outputProvider, ok := execBackend.(backend.OutputProvider); ok {
+		return outputProvider.Stdout(), outputProvider.Stderr()
 	}
-	return 1
+	return nil, nil
 }
 
-func isNoChildErr(err error) bool {
-	var errno syscall.Errno
-	if errors.As(err, &errno) && errno == syscall.ECHILD {
-		return true
-	}
-	var sysErr *os.SyscallError
-	if errors.As(err, &sysErr) && sysErr.Err == syscall.ECHILD {
-		return true
-	}
-	return false
-}
-
-func fillReceiptMeta(receipt *audit.Receipt, start time.Time, pid uint32, cmdArgs []string, workingDir string, stdoutBuf, stderrBuf *bytes.Buffer, runErr error, extraErrors []string, resources audit.Resources) {
+func fillReceiptMeta(receipt *audit.Receipt, start time.Time, pid uint32, cmdArgs []string, workingDir string, stdoutBytes, stderrBytes []byte, runErr error, extraErrors []string, resources audit.Resources, metadata backend.BackendMetadata) {
 	receipt.ReceiptVersion = "v0.2"
 	receipt.ExecutionID = executionID(start, pid, cmdArgs)
 	receipt.Timestamp = start.UTC().Format(time.RFC3339Nano)
@@ -226,9 +192,14 @@ func fillReceiptMeta(receipt *audit.Receipt, start time.Time, pid uint32, cmdArg
 		Sandbox: audit.Sandbox{Network: "enabled"},
 	}
 
+	receipt.Execution = &audit.ExecutionInfo{
+		Backend:   metadata.Backend,
+		Isolation: metadata.Isolation,
+	}
+
 	receipt.Artifacts = &audit.Artifacts{
-		StdoutHash: hashBytes(stdoutBuf.Bytes()),
-		StderrHash: hashBytes(stderrBuf.Bytes()),
+		StdoutHash: hashBytes(stdoutBytes),
+		StderrHash: hashBytes(stderrBytes),
 	}
 
 	if receipt.Syscalls == nil {
