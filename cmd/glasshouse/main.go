@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"glasshouse/backend"
 	"glasshouse/runner"
 )
 
@@ -15,7 +16,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	cmdArgs, parseErr := parseRunArgs(os.Args[2:])
+	opts, cmdArgs, parseErr := parseRunArgs(os.Args[2:])
 	if parseErr != nil {
 		fmt.Fprintln(os.Stderr, "glasshouse:", parseErr)
 		usage()
@@ -27,7 +28,8 @@ func main() {
 		os.Exit(2)
 	}
 
-	result, err := runner.Run(context.Background(), cmdArgs)
+	execBackend := backend.NewProcessBackend(backend.ProcessOptions{Guest: opts.Guest})
+	result, err := runner.Run(context.Background(), cmdArgs, execBackend)
 	writeErr := writeReceipt(result.Receipt)
 	if writeErr != nil {
 		fmt.Fprintln(os.Stderr, "glasshouse:", writeErr)
@@ -42,23 +44,30 @@ func main() {
 	}
 }
 
-func parseRunArgs(args []string) ([]string, error) {
+type runOptions struct {
+	Guest bool
+}
+
+func parseRunArgs(args []string) (runOptions, []string, error) {
+	opts := runOptions{}
 	if len(args) == 0 {
-		return nil, nil
+		return opts, nil, nil
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
 		case "--":
-			return args[i+1:], nil
+			return opts, args[i+1:], nil
+		case "--guest":
+			opts.Guest = true
 		default:
 			if len(arg) > 0 && arg[0] == '-' {
-				return nil, fmt.Errorf("unknown flag: %s", arg)
+				return opts, nil, fmt.Errorf("unknown flag: %s", arg)
 			}
-			return args[i:], nil
+			return opts, args[i:], nil
 		}
 	}
-	return nil, nil
+	return opts, nil, nil
 }
 
 func writeReceipt(receipt interface{}) error {
@@ -73,5 +82,5 @@ func writeReceipt(receipt interface{}) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: glasshouse run -- <command> [args...]")
+	fmt.Fprintln(os.Stderr, "usage: glasshouse run [--guest] -- <command> [args...]")
 }

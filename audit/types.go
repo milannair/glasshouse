@@ -26,12 +26,13 @@ type Receipt struct {
 	ExecutionID    string `json:"execution_id,omitempty"`
 	Timestamp      string `json:"timestamp,omitempty"`
 
-	Outcome     *Outcome     `json:"outcome,omitempty"`
-	Timing      *Timing      `json:"timing,omitempty"`
-	ProcessTree []ProcessV2  `json:"process_tree,omitempty"`
-	Syscalls    *SyscallInfo `json:"syscalls,omitempty"`
-	Environment *Environment `json:"environment,omitempty"`
-	Artifacts   *Artifacts   `json:"artifacts,omitempty"`
+	Outcome     *Outcome       `json:"outcome,omitempty"`
+	Timing      *Timing        `json:"timing,omitempty"`
+	ProcessTree []ProcessV2    `json:"process_tree,omitempty"`
+	Syscalls    *SyscallInfo   `json:"syscalls,omitempty"`
+	Environment *Environment   `json:"environment,omitempty"`
+	Execution   *ExecutionInfo `json:"execution,omitempty"`
+	Artifacts   *Artifacts     `json:"artifacts,omitempty"`
 
 	ExitCode   int             `json:"exit_code"`
 	DurationMs int64           `json:"duration_ms"`
@@ -110,6 +111,11 @@ type Environment struct {
 	OS      string  `json:"os"`
 	Arch    string  `json:"arch"`
 	Sandbox Sandbox `json:"sandbox"`
+}
+
+type ExecutionInfo struct {
+	Backend   string `json:"backend"`
+	Isolation string `json:"isolation"`
 }
 
 type Sandbox struct {
