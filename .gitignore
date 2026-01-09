@@ -13,6 +13,7 @@ receipt-expected.json
 *.test
 *.out
 go.work
+.cache/
 
 # IDE
 .vscode/
