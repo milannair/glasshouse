@@ -8,9 +8,11 @@ import (
 	"os"
 	"strings"
 
+	"glasshouse/audit"
 	"glasshouse/backend/firecracker"
 	"glasshouse/backend/process"
 	"glasshouse/core/profiling"
+	"glasshouse/core/profiling/ebpf"
 	"glasshouse/core/profiling/noop"
 	"glasshouse/node/config"
 	"glasshouse/node/manager"
@@ -57,7 +59,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "node-agent:", err)
 		os.Exit(1)
 	}
-	mgr.Profiler = noop.NewController()
+	mgr.Profiler = selectProfiler(profileMode)
 
 	resp, runErr := mgr.Run(context.Background(), manager.Request{
 		Args:      cmdArgs,
@@ -112,6 +114,21 @@ func mustGetwd() string {
 		return ""
 	}
 	return wd
+}
+
+func selectProfiler(mode profiling.Mode) profiling.Controller {
+	if mode == profiling.ProfilingDisabled {
+		return noop.NewController()
+	}
+	return ebpf.NewController(auditConfigFromEnv())
+}
+
+func auditConfigFromEnv() audit.Config {
+	cfg := audit.Config{}
+	if dir := os.Getenv("GLASSHOUSE_BPF_DIR"); dir != "" {
+		cfg.BPFObjectDir = dir
+	}
+	return cfg
 }
 
 func usage() {

@@ -7,9 +7,11 @@ import (
 	"os"
 	"strings"
 
+	"glasshouse/audit"
 	"glasshouse/backend/process"
 	"glasshouse/core/execution"
 	"glasshouse/core/profiling"
+	"glasshouse/core/profiling/ebpf"
 	"glasshouse/core/profiling/noop"
 )
 
@@ -41,7 +43,7 @@ func main() {
 
 	engine := execution.Engine{
 		Backend:  process.New(process.Options{Guest: opts.Guest}),
-		Profiler: noop.NewController(),
+		Profiler: selectProfiler(opts.Profiling),
 	}
 
 	result, err := engine.Run(context.Background(), spec)
@@ -116,6 +118,21 @@ func setProfilingMode(opts *runOptions, mode string) error {
 		return fmt.Errorf("unknown profile mode: %s", mode)
 	}
 	return nil
+}
+
+func selectProfiler(mode profiling.Mode) profiling.Controller {
+	if mode == profiling.ProfilingDisabled {
+		return noop.NewController()
+	}
+	return ebpf.NewController(ebpfConfigFromEnv())
+}
+
+func ebpfConfigFromEnv() audit.Config {
+	cfg := audit.Config{}
+	if dir := os.Getenv("GLASSHOUSE_BPF_DIR"); dir != "" {
+		cfg.BPFObjectDir = dir
+	}
+	return cfg
 }
 
 func mustGetwd() string {
