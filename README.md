@@ -13,6 +13,7 @@ Most agents can explain what they intended to do, but not what actually happened
 - Optional profiling with provenance (host/guest/combined); sandbox mode works without profiling
 - Receipt grammar lives in `core/receipt`; receipts are versioned and redaction-aware
 - Policy evaluation is deterministic and split from enforcement
+- Node-agent and guest-probe scaffolds for control-plane and guest environments
 
 ## How it works (short)
 
@@ -49,6 +50,12 @@ Run a custom command:
 
 ```bash
 sudo ./scripts/run-wsl.sh -- python3 demo/sneaky.py
+```
+
+Node agent (sandbox-only by default):
+
+```bash
+go run ./cmd/node-agent --backend process --profile disabled -- echo hi
 ```
 
 ## Build (manual)
@@ -170,6 +177,16 @@ WSL helpers:
   - use default exec capture (no argv) or `GLASSHOUSE_CAPTURE_ARGV=force`
 - no events:
   - check tracefs is mounted and `ebpf/objects/*.o` exist
+
+## Repository layout (high level)
+
+- `core/`: execution engine, profiling contracts, receipt grammar, policy, training, versioning.
+- `backend/`: execution adapters (process, firecracker stub, kata stub, fake for tests).
+- `cmd/`: CLI, node-agent scaffold, guest-probe scaffold.
+- `node/`: registry, pool, manager, enforcement, and config used by the node-agent.
+- `guest/`: transport/event plumbing and guest init/rootfs notes.
+- `deploy/`: docker/k8s/local deployment guidance.
+- `docs/`: architecture, profiling, policy, receipt schema, and threat model.
 
 ## Learn the project
 

@@ -4,3 +4,6 @@
 - Includes provenance (host/guest/host+guest), execution metadata, process tree, filesystem/network/syscall summaries, artifacts, and resources.
 - Supports masking via path prefixes to redact sensitive entries while recording redactions.
 - Receipts are only produced when profiling is enabled and attached.
+- Deterministic serialization: stable field ordering and hashes for stdout/stderr artifacts.
+- Redactions are explicit in `redactions` to aid audits and training pipelines.
+- Legacy fields remain for backward compatibility, but `version` + `provenance` are the primary anchors.
