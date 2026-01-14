@@ -167,3 +167,5 @@ func isNoChildErr(err error) bool {
 	}
 	return false
 }
+
+var _ Backend = (*processBackend)(nil)

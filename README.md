@@ -9,6 +9,7 @@ Most agents can explain what they intended to do, but not what actually happened
 ## Features
 
 - Run any command as a child process
+- Execution backend abstraction (process backend today)
 - Capture process execs and parent relationships
 - Track file opens (read vs write inferred from flags)
 - Track outbound connect attempts
@@ -144,6 +145,10 @@ WSL helpers:
     "arch": "amd64",
     "sandbox": { "network": "enabled" }
   },
+  "execution": {
+    "backend": "process",
+    "isolation": "none"
+  },
   "artifacts": {
     "stdout_hash": "<sha256>",
     "stderr_hash": "<sha256>"
@@ -170,3 +175,4 @@ Legacy fields (`exit_code`, `duration_ms`, `processes`, `filesystem.read`, `file
 ## Learn the project
 
 Start with the hands-on tutorial in `info.md`.
+For a system-level overview, see `ARCHITECTURE.md`.

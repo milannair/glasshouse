@@ -1,14 +1,15 @@
 # Working State
 
-Updated: 2026-01-09T07:08:05Z
+Updated: 2026-01-09T08:00:11Z
 
 ## Repository Map
-- `backend/` defines the execution backend interface and the process backend implementation.
+- `backend/` defines the execution backend interface, process backend, and firecracker skeleton.
 - `cmd/glasshouse/` is the CLI entrypoint that parses arguments and writes `receipt.json`.
 - `runner/` orchestrates backend lifecycle, audit collection, and receipt metadata assembly.
 - `audit/` defines the collector interface, event types, receipt schema, and the in-memory aggregator.
 - `ebpf/` contains the BPF programs (exec, fs, net), shared headers, and build artifacts.
 - `scripts/` contains build and WSL setup helpers; `demo/` is the activity generator.
+- `ARCHITECTURE.md` documents the runtime roles and future backend fit.
 
 ## System Overview
 - glasshouse runs a command, observes OS-level activity via eBPF tracepoints, and emits a JSON receipt.
@@ -19,8 +20,9 @@ Updated: 2026-01-09T07:08:05Z
 
 ## Backend Abstraction (`backend/`)
 - `Backend` defines Prepare/Start/Wait/Cleanup plus `Metadata()` for receipt enrichment.
-- `BackendMetadata` includes `backend` and `isolation` values (process/none today).
+- `BackendMetadata` includes `backend` and `isolation` values (process/none, firecracker/vm).
 - `processBackend` wraps `exec.CommandContext` and preserves existing signal + wait semantics.
+- Firecracker skeleton validates config in `Prepare()` and returns a sentinel error from `Start()`.
 - Optional interfaces expose stdout/stderr buffers and process state for receipts and resources.
 
 ## CLI Behavior (`cmd/glasshouse/main.go`)
@@ -88,24 +90,37 @@ Updated: 2026-01-09T07:08:05Z
 - Filesystem read/write inference is derived from open flags.
 - Receipts now include an `execution` section with backend metadata.
 
+## Firecracker Backend Skeleton (`backend/firecracker/`)
+- Config validation checks for required kernel/rootfs paths only.
+- `Start()` returns `ErrFirecrackerNotImplemented` and does not access KVM or binaries.
+- `Wait()` and `Cleanup()` are no-ops; metadata reports `backend=firecracker`, `isolation=vm`.
+
+## Test Suite
+- Backend contract tests cover process backend exit codes, PID validity, and output capture.
+- Firecracker tests validate the sentinel error and metadata without touching KVM.
+- Runner tests use a fake backend to enforce lifecycle order and metadata propagation.
+- CLI tests build the binary and exercise `/bin/true`, `/bin/false`, `/bin/does-not-exist` in temp dirs.
+- Receipt tests assert execution metadata, legacy fields, and empty activity structure.
+
 ## Platform Constraints
 - Linux only; WSL is partially supported and may miss argv, syscalls, or IO events.
 - Requires BTF (`/sys/kernel/btf/vmlinux`) and ringbuf support (kernel 5.8+).
 - Root or CAP_BPF/CAP_SYS_ADMIN is needed to load BPF programs.
 
-## Recent Changes (feature/guest)
-- Added backend abstraction and process backend with guest setup and signal handling.
-- Runner now orchestrates backend lifecycle and pulls output/resources from the backend.
-- Receipt now includes an `execution` block with backend and isolation metadata.
+## Recent Changes (feature/hardening)
+- Added `ARCHITECTURE.md` and updated README with execution metadata and backend notes.
+- Added firecracker backend skeleton with config validation and sentinel error.
+- Added comprehensive tests across backend, runner, receipt, and CLI boundaries.
+- Added `.cache/` to `.gitignore` for local test cache usage.
 
 ## Repository Status
-- Branch: `feature/guest`.
+- Branch: `feature/hardening`.
 - Receipt schema: v0.2 plus execution metadata (v0.3 prep).
-- Working tree: modified (backend refactor in progress).
+- Working tree: clean.
 
 ## Verification
 - Manual: `/bin/does-not-exist` run returns `exit_code: 1` with missing binary error (user run).
 - Manual: receipt includes `execution.backend=process` and `execution.isolation=none` after rebuild (user run).
 
 ## Tests
-- Not run.
+- `GOCACHE=/home/milan/Code/glasshouse/.cache/go-build go test ./...`
