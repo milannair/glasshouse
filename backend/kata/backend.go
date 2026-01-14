@@ -1,42 +1,37 @@
-package firecracker
+package kata
 
 import (
 	"context"
-	"errors"
 
 	"glasshouse/core/execution"
 	"glasshouse/core/profiling"
 	"glasshouse/core/receipt"
 )
 
-var ErrFirecrackerNotImplemented = errors.New("firecracker backend not implemented")
+// Backend is a placeholder for Kata Containers integration.
+type Backend struct{}
 
-type Backend struct {
-	cfg Config
-}
+func New() *Backend { return &Backend{} }
 
-func New(cfg Config) *Backend {
-	return &Backend{cfg: cfg}
-}
-
-func (b *Backend) Name() string { return "firecracker" }
+func (b *Backend) Name() string { return "kata" }
 
 func (b *Backend) Prepare(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return b.cfg.Validate()
+	return ctx.Err()
 }
 
 func (b *Backend) Start(spec execution.ExecutionSpec) (execution.ExecutionHandle, error) {
-	return execution.ExecutionHandle{}, ErrFirecrackerNotImplemented
+	_ = spec
+	return execution.ExecutionHandle{}, nil
 }
 
 func (b *Backend) Wait(h execution.ExecutionHandle) (execution.ExecutionResult, error) {
-	return execution.ExecutionResult{Handle: h, ExitCode: 0}, nil
+	return execution.ExecutionResult{Handle: h}, nil
 }
 
-func (b *Backend) Kill(h execution.ExecutionHandle) error { return nil }
+func (b *Backend) Kill(h execution.ExecutionHandle) error {
+	_ = h
+	return nil
+}
 
 func (b *Backend) Cleanup(h execution.ExecutionHandle) error {
 	_ = h
@@ -53,9 +48,6 @@ func (b *Backend) ProfilingInfo(h execution.ExecutionHandle) execution.BackendPr
 		},
 		SupportedModes: []profiling.Mode{
 			profiling.ProfilingDisabled,
-			profiling.ProfilingHost,
-			profiling.ProfilingGuest,
-			profiling.ProfilingCombined,
 		},
 		SupportsProfile: false,
 	}

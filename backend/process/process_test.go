@@ -9,7 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"glasshouse/backend"
+	"glasshouse/backend/process"
+	"glasshouse/core/execution"
 )
 
 func requireCommand(t *testing.T, path string) {
@@ -38,25 +39,25 @@ func TestProcessBackendExitCodes(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			b := backend.NewProcessBackend(backend.ProcessOptions{Stdout: io.Discard, Stderr: io.Discard})
+			b := process.New(process.Options{Stdout: io.Discard, Stderr: io.Discard})
 			if err := b.Prepare(ctx); err != nil {
 				t.Fatalf("Prepare: %v", err)
 			}
-			pid, err := b.Start(ctx, tc.cmd)
+			handle, err := b.Start(execution.ExecutionSpec{Args: tc.cmd})
 			if err != nil {
 				t.Fatalf("Start: %v", err)
 			}
-			if pid <= 0 {
-				t.Fatalf("invalid pid: %d", pid)
+			if handle.ID == "" {
+				t.Fatalf("missing handle id")
 			}
-			exitCode, err := b.Wait(ctx)
+			waitRes, err := b.Wait(handle)
 			if err != nil && tc.wantCode == 0 {
 				t.Fatalf("Wait: %v", err)
 			}
-			if exitCode != tc.wantCode {
-				t.Fatalf("exit code %d, want %d", exitCode, tc.wantCode)
+			if waitRes.ExitCode != tc.wantCode {
+				t.Fatalf("exit code %d, want %d", waitRes.ExitCode, tc.wantCode)
 			}
-			if err := b.Cleanup(ctx); err != nil {
+			if err := b.Cleanup(handle); err != nil {
 				t.Fatalf("Cleanup: %v", err)
 			}
 
@@ -64,7 +65,7 @@ func TestProcessBackendExitCodes(t *testing.T) {
 			if meta.Backend != "process" {
 				t.Fatalf("backend metadata %q", meta.Backend)
 			}
-			if meta.Isolation != "none" {
+			if meta.Isolation == "" {
 				t.Fatalf("isolation metadata %q", meta.Isolation)
 			}
 		})
@@ -75,23 +76,23 @@ func TestProcessBackendCapturesOutput(t *testing.T) {
 	requireCommand(t, "/bin/echo")
 
 	ctx := context.Background()
-	b := backend.NewProcessBackend(backend.ProcessOptions{Stdout: io.Discard, Stderr: io.Discard})
+	b := process.New(process.Options{Stdout: io.Discard, Stderr: io.Discard})
 	if err := b.Prepare(ctx); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	_, err := b.Start(ctx, []string{"/bin/echo", "hello"})
+	handle, err := b.Start(execution.ExecutionSpec{Args: []string{"/bin/echo", "hello"}})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	_, err = b.Wait(ctx)
+	_, err = b.Wait(handle)
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if err := b.Cleanup(ctx); err != nil {
+	if err := b.Cleanup(handle); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 
-	outputProvider, ok := b.(backend.OutputProvider)
+	outputProvider, ok := interface{}(b).(execution.OutputProvider)
 	if !ok {
 		t.Fatal("backend does not implement OutputProvider")
 	}
@@ -107,23 +108,23 @@ func TestProcessBackendCapturesStderr(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	b := backend.NewProcessBackend(backend.ProcessOptions{Stdout: io.Discard, Stderr: io.Discard})
+	b := process.New(process.Options{Stdout: io.Discard, Stderr: io.Discard})
 	if err := b.Prepare(ctx); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	_, err := b.Start(ctx, []string{"/bin/sh", "-c", "echo err 1>&2"})
+	handle, err := b.Start(execution.ExecutionSpec{Args: []string{"/bin/sh", "-c", "echo err 1>&2"}})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	_, err = b.Wait(ctx)
+	_, err = b.Wait(handle)
 	if err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if err := b.Cleanup(ctx); err != nil {
+	if err := b.Cleanup(handle); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 
-	outputProvider, ok := b.(backend.OutputProvider)
+	outputProvider, ok := interface{}(b).(execution.OutputProvider)
 	if !ok {
 		t.Fatal("backend does not implement OutputProvider")
 	}

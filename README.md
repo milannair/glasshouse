@@ -1,6 +1,6 @@
 # glasshouse
 
-Auditing-first execution runner for AI agents. glasshouse runs a command, observes OS-level activity via eBPF, and emits a JSON execution receipt.
+Auditing-first sandbox for AI agents and tools. Glasshouse runs commands with a pluggable backend, can observe OS-level activity via optional profiling, and emits a versioned receipt only when profiling is enabled.
 
 ## Why it exists
 
@@ -8,12 +8,11 @@ Most agents can explain what they intended to do, but not what actually happened
 
 ## Features
 
-- Run any command as a child process
-- Execution backend abstraction (process backend today)
-- Capture process execs and parent relationships
-- Track file opens (read vs write inferred from flags)
-- Track outbound connect attempts
-- Emit a single `receipt.json` artifact
+- Run any command as a child process (sandbox-only by default)
+- Substrate-agnostic execution backend contract (process backend today; Kata/Firecracker stubs)
+- Optional profiling with provenance (host/guest/combined); sandbox mode works without profiling
+- Receipt grammar lives in `core/receipt`; receipts are versioned and redaction-aware
+- Policy evaluation is deterministic and split from enforcement
 
 ## How it works (short)
 
@@ -75,13 +74,13 @@ go build -o glasshouse ./cmd/glasshouse
 ## Run
 
 ```bash
-sudo ./glasshouse run -- python3 demo/sneaky.py
+sudo ./glasshouse run --profile host -- python3 demo/sneaky.py
 ```
 
 Outputs:
 
 - child process stdout/stderr
-- `receipt.json`
+- `receipt.json` (only when profiling is enabled)
 
 ## Configuration
 
@@ -94,12 +93,13 @@ WSL helpers:
 - `scripts/run-wsl.sh --capture-argv`
 - `scripts/run-wsl.sh --force-capture-argv`
 
-## Receipt schema (v0.2)
+## Receipt schema (v0.3.0, profiling-on only)
 
 ```json
 {
-  "receipt_version": "v0.2",
+  "version": "v0.3.0",
   "execution_id": "<stable unique id>",
+  "provenance": "host",
   "timestamp": "<RFC3339 timestamp>",
   "outcome": {
     "exit_code": 0,
@@ -137,7 +137,8 @@ WSL helpers:
     "denied": []
   },
   "resources": {
-    "max_rss_kb": 8124
+    "max_rss_kb": 8124,
+    "cpu_time_ms": 3
   },
   "environment": {
     "runtime": "python3.x",
@@ -160,8 +161,6 @@ WSL helpers:
   ]
 }
 ```
-
-Legacy fields (`exit_code`, `duration_ms`, `processes`, `filesystem.read`, `filesystem.written`, `network.connections`) are preserved for backward compatibility.
 
 ## Troubleshooting
 
