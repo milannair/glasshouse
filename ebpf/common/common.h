@@ -23,6 +23,7 @@ struct event {
 	__u32 type;
 	__u32 pid;
 	__u32 ppid;
+	__u64 cgroup_id;
 	__u32 flags;
 	__u16 port;
 	__u8 addr_family;
@@ -46,6 +47,7 @@ static __always_inline void fill_common(struct event *e) {
 	__u64 pid_tgid = bpf_get_current_pid_tgid();
 	e->pid = pid_tgid >> 32;
 	e->ppid = get_ppid();
+	e->cgroup_id = bpf_get_current_cgroup_id();
 	bpf_get_current_comm(&e->comm, sizeof(e->comm));
 }
 

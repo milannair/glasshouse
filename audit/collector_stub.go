@@ -14,6 +14,6 @@ func NewCollector(cfg Config) (Collector, error) {
 }
 
 func (s *stubCollector) Start(ctx context.Context) error { return nil }
-func (s *stubCollector) Events() <-chan Event          { return nil }
-func (s *stubCollector) Errors() <-chan error          { return nil }
-func (s *stubCollector) Close() error                  { return nil }
+func (s *stubCollector) Events() <-chan Event            { return nil }
+func (s *stubCollector) Errors() <-chan error            { return nil }
+func (s *stubCollector) Close() error                    { return nil }

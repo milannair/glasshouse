@@ -1,4 +1,6 @@
-package backend
+//go:build linux
+
+package process
 
 import (
 	"context"

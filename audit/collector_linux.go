@@ -21,7 +21,7 @@ import (
 
 const (
 	defaultObjDir = "ebpf/objects"
-	eventSize     = 308
+	eventSize     = 320
 )
 
 type ebpfCollector struct {
@@ -227,13 +227,14 @@ func parseEvent(data []byte) (Event, error) {
 	ev.Type = EventType(binary.LittleEndian.Uint32(data[0:4]))
 	ev.PID = binary.LittleEndian.Uint32(data[4:8])
 	ev.PPID = binary.LittleEndian.Uint32(data[8:12])
-	ev.Flags = binary.LittleEndian.Uint32(data[12:16])
-	ev.Port = binary.LittleEndian.Uint16(data[16:18])
-	ev.AddrFamily = data[18]
-	ev.Proto = data[19]
-	copy(ev.Addr[:], data[20:36])
-	ev.Comm = trimNull(data[36:52])
-	ev.Path = trimNull(data[52:308])
+	ev.CgroupID = binary.LittleEndian.Uint64(data[16:24])
+	ev.Flags = binary.LittleEndian.Uint32(data[24:28])
+	ev.Port = binary.LittleEndian.Uint16(data[28:30])
+	ev.AddrFamily = data[30]
+	ev.Proto = data[31]
+	copy(ev.Addr[:], data[32:48])
+	ev.Comm = trimNull(data[48:64])
+	ev.Path = trimNull(data[64:320])
 
 	return ev, nil
 }

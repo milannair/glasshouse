@@ -1,24 +1,26 @@
 # Glasshouse Architecture
 
+> Updated for the modular core: execution, profiling, policy, and receipts live in `core/`. Backends implement `ExecutionBackend` and profiling is optional and fail-open. Receipts are emitted only when profiling is enabled.
+
 ## Overview
 Glasshouse runs a command, observes its host-side activity through the kernel, and emits a single execution receipt (`receipt.json`). The core runtime flow is:
 
 1) CLI parses arguments and selects a backend.
-2) Runner orchestrates the backend lifecycle and audit collection.
-3) eBPF programs emit events into a ring buffer.
+2) The execution engine orchestrates the backend lifecycle and optional audit collection.
+3) eBPF programs emit events into a ring buffer when profiling is enabled.
 4) The collector decodes events and the aggregator builds a receipt.
 
 Glasshouse is an observer, not an enforcer. It reports what the OS observed rather than what the workload claims to have done.
 
-## Runner Role
-The runner is the orchestrator. It:
+## Execution Engine Role
+The engine is the orchestrator. It:
 
 - Calls the backend lifecycle in order: Prepare -> Start -> Wait -> Cleanup.
-- Starts the audit collector and feeds events into the aggregator.
-- Builds the receipt, including process tree, filesystem/network activity, syscalls, artifacts, and execution metadata.
-- Exits with the child exit code and always writes `receipt.json` via the CLI.
+- Starts optional profiling and feeds events into the aggregator.
+- Builds the receipt, including process tree, filesystem/network activity, syscalls, artifacts, and execution metadata (only when profiling is enabled).
+- Exits with the child exit code; receipt emission depends on profiling settings.
 
-The runner does not contain backend-specific logic. It only interacts with backends through the `backend.Backend` interface and optional data providers for receipt enrichment.
+The engine does not contain backend-specific logic. It only interacts with backends through the `ExecutionBackend` interface and optional data providers for receipt enrichment.
 
 ## Backend Role
 Backends encapsulate how a workload is executed. Each backend is responsible for:
@@ -29,7 +31,7 @@ Backends encapsulate how a workload is executed. Each backend is responsible for
 - Cleaning up any backend resources.
 - Reporting execution metadata (`backend` and `isolation`).
 
-The default process backend executes a host process and preserves current behavior. Future VM backends (Firecracker, Kata) will implement the same interface without changing the runner.
+The default process backend executes a host process and preserves sandbox-only behavior. Future VM backends (Firecracker, Kata) will implement the same interface without changing the engine.
 
 ## Host-Side Observability Model
 Glasshouse observes host kernel activity using eBPF tracepoints. This design keeps the workload unmodified:
@@ -51,7 +53,7 @@ Instrumenting workloads adds complexity, requires cooperation from the target pr
 VM backends will fit into the same architecture by implementing the backend interface:
 
 - The backend will manage VM lifecycle and report a root PID that represents the host-side process tree to observe (e.g., the VM monitor process).
-- The runner and audit pipeline remain unchanged.
+- The engine and receipt pipeline remain unchanged.
 - The receipt will include `execution.backend = "firecracker"` and `execution.isolation = "vm"` to make isolation mode explicit.
 
 This preserves a stable core while enabling new execution environments without changing collector or aggregation logic.

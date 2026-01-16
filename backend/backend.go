@@ -1,36 +1,16 @@
 package backend
 
-import (
-	"context"
-	"strings"
+import "glasshouse/core/execution"
+
+// Re-export core execution contracts for compatibility with existing callers.
+type (
+	ExecutionBackend     = execution.ExecutionBackend
+	ExecutionSpec        = execution.ExecutionSpec
+	ExecutionHandle      = execution.ExecutionHandle
+	ExecutionResult      = execution.ExecutionResult
+	BackendProfilingInfo = execution.BackendProfilingInfo
+	ExtraErrorProvider   = execution.ExtraErrorProvider
+	OutputProvider       = execution.OutputProvider
+	ProcessStateProvider = execution.ProcessStateProvider
+	MetadataProvider     = execution.MetadataProvider
 )
-
-type Backend interface {
-	Prepare(ctx context.Context) error
-	Start(ctx context.Context, cmd []string) (rootPID int, err error)
-	Wait(ctx context.Context) (exitCode int, err error)
-	Cleanup(ctx context.Context) error
-	Metadata() BackendMetadata
-}
-
-type BackendMetadata struct {
-	Backend   string `json:"backend"`
-	Isolation string `json:"isolation"`
-}
-
-type ErrorList struct {
-	Errors []string
-}
-
-func (e ErrorList) Error() string {
-	return strings.Join(e.Errors, "; ")
-}
-
-type ExtraErrorProvider interface {
-	ExtraErrors() []string
-}
-
-type OutputProvider interface {
-	Stdout() []byte
-	Stderr() []byte
-}

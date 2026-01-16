@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"glasshouse/core/execution"
+	"glasshouse/core/profiling"
 )
 
 func TestFirecrackerBackendSkeleton(t *testing.T) {
@@ -12,17 +15,17 @@ func TestFirecrackerBackendSkeleton(t *testing.T) {
 	if err := b.Prepare(context.Background()); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
-	pid, err := b.Start(context.Background(), []string{"/bin/true"})
+	handle, err := b.Start(execution.ExecutionSpec{Args: []string{"/bin/true"}})
 	if !errors.Is(err, ErrFirecrackerNotImplemented) {
 		t.Fatalf("Start error %v", err)
 	}
-	if pid != 0 {
-		t.Fatalf("expected pid 0, got %d", pid)
+	if handle.ID != "" {
+		t.Fatalf("expected empty handle id, got %q", handle.ID)
 	}
-	if exitCode, err := b.Wait(context.Background()); err != nil || exitCode != 0 {
-		t.Fatalf("Wait exitCode=%d err=%v", exitCode, err)
+	if res, err := b.Wait(handle); err != nil || res.ExitCode != 0 {
+		t.Fatalf("Wait exitCode=%d err=%v", res.ExitCode, err)
 	}
-	if err := b.Cleanup(context.Background()); err != nil {
+	if err := b.Cleanup(handle); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 
@@ -32,5 +35,13 @@ func TestFirecrackerBackendSkeleton(t *testing.T) {
 	}
 	if meta.Isolation != "vm" {
 		t.Fatalf("isolation metadata %q", meta.Isolation)
+	}
+
+	info := b.ProfilingInfo(handle)
+	if info.SupportsProfile {
+		t.Fatalf("profiling should be disabled by default until implemented")
+	}
+	if len(info.SupportedModes) == 0 || info.SupportedModes[0] != profiling.ProfilingDisabled {
+		t.Fatalf("unexpected supported modes %#v", info.SupportedModes)
 	}
 }
