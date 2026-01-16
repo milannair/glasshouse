@@ -23,3 +23,9 @@ Artifacts:
 - `core/receipt` defines the receipt grammar and metadata enrichment.
 - `core/policy` evaluates receipts deterministically; enforcement is decoupled.
 - `node/` packages scaffold the control plane and node-agent orchestration.
+
+Quickstart (Linux):
+
+- Build eBPF objects: `sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h` then `./scripts/build-ebpf.sh`.
+- Per-run receipt: `go build -o glasshouse ./cmd/glasshouse` and `sudo ./glasshouse run --profile host -- /bin/echo hello`.
+- Daemon receipt: `go build -o glasshouse-agent ./cmd/glasshouse-agent`, start it with a control socket, then run `./scripts/test-agent.sh` to emit a receipt.

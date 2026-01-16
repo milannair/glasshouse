@@ -5,7 +5,7 @@
 - Profiling (`core/profiling`) is optional, fail-open, and CO-RE compatible; absence of profiling must not block execution.
 - Receipts (`core/receipt`) are deterministic, versioned, and tied to profiling provenance (host/guest/combined).
 - Control-plane components (`cmd/node-agent`, `node/`) coordinate long-running execution and enforcement; `cmd/guest-probe` is the guest-side hook for VM backends.
-- Daemon mode (`cmd/glasshouse-agent`) attaches eBPF once and aggregates events across multiple executions by execution identity.
+- Daemon mode (`cmd/glasshouse-agent`) attaches eBPF once and aggregates events across multiple executions by execution identity; control is via a simple unix socket (see `scripts/test-agent.sh`).
 
 Execution lifecycle:
 

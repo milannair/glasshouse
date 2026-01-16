@@ -6,6 +6,7 @@
 - Policy inputs are kernel events or receipts only; the core does not read backend internals or LSM state.
 - Enforcement hooks live in `core/agent` and `node/enforcement`; they act via observe+kill and are best-effort.
 - Tests must cover policy correctness, determinism, and schema/version compatibility.
+- Receipts include policy violations and enforcement decisions for explainability.
 
 Phases:
 

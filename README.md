@@ -43,26 +43,32 @@ WSL support is partial:
 
 ## Quick start (Linux)
 
+Build eBPF objects:
+
 ```bash
-sudo ./scripts/run-wsl.sh
+sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h
+./scripts/build-ebpf.sh
 ```
 
-Run a custom command:
+Per-execution run (receipt.json written on exit):
 
 ```bash
-sudo ./scripts/run-wsl.sh -- python3 demo/sneaky.py
+go build -o glasshouse ./cmd/glasshouse
+sudo ./glasshouse run --profile host -- /bin/echo hello
+```
+
+Daemon mode (observes only, receipts per execution):
+
+```bash
+go build -o glasshouse-agent ./cmd/glasshouse-agent
+sudo ./glasshouse-agent start --control-socket /tmp/glasshouse-agent.sock --receipt-dir /tmp/glasshouse-receipts
+./scripts/test-agent.sh
 ```
 
 Node agent (sandbox-only by default):
 
 ```bash
 go run ./cmd/node-agent --backend process --profile disabled -- echo hi
-```
-
-Daemon mode (observes only):
-
-```bash
-sudo go run ./cmd/glasshouse-agent start --control-socket /tmp/glasshouse-agent.sock
 ```
 
 ## Build (manual)
@@ -189,7 +195,7 @@ WSL helpers:
 
 - `core/`: execution engine, profiling contracts, receipt grammar, policy, training, versioning.
 - `backend/`: execution adapters (process, firecracker stub, kata stub, fake for tests).
-- `cmd/`: CLI, node-agent scaffold, guest-probe scaffold.
+- `cmd/`: CLI, glasshouse-agent daemon, node-agent scaffold, guest-probe scaffold.
 - `node/`: registry, pool, manager, enforcement, and config used by the node-agent.
 - `guest/`: transport/event plumbing and guest init/rootfs notes.
 - `deploy/`: docker/k8s/local deployment guidance.
