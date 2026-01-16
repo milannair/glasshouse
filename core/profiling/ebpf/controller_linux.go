@@ -50,6 +50,7 @@ func (s *session) Events() <-chan profiling.Event {
 				Type:       profiling.EventType(ev.Type),
 				PID:        ev.PID,
 				PPID:       ev.PPID,
+				CgroupID:   ev.CgroupID,
 				Flags:      ev.Flags,
 				Comm:       ev.Comm,
 				Path:       ev.Path,

@@ -14,6 +14,7 @@ Most agents can explain what they intended to do, but not what actually happened
 - Receipt grammar lives in `core/receipt`; receipts are versioned and redaction-aware
 - Policy evaluation is deterministic and split from enforcement
 - Node-agent and guest-probe scaffolds for control-plane and guest environments
+- Daemon mode (`glasshouse-agent`) attaches eBPF once and aggregates receipts by execution identity
 
 ## How it works (short)
 
@@ -56,6 +57,12 @@ Node agent (sandbox-only by default):
 
 ```bash
 go run ./cmd/node-agent --backend process --profile disabled -- echo hi
+```
+
+Daemon mode (observes only):
+
+```bash
+sudo go run ./cmd/glasshouse-agent start --control-socket /tmp/glasshouse-agent.sock
 ```
 
 ## Build (manual)

@@ -3,35 +3,72 @@ package receipt
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"glasshouse/core/identity"
 )
 
 // Meta bundles execution context used to enrich receipts after aggregation.
 type Meta struct {
-	Start       time.Time
-	RootPID     uint32
-	Args        []string
-	Workdir     string
-	Stdout      []byte
-	Stderr      []byte
-	RunErr      error
-	ExtraErrors []string
-	Resources   Resources
-	Backend     ExecutionInfo
-	Provenance  string
-	RedactPaths []string
+	Start           time.Time
+	End             time.Time
+	RootPID         uint32
+	RootStartTime   uint64
+	ExecutionID     string
+	Args            []string
+	Workdir         string
+	Stdout          []byte
+	Stderr          []byte
+	RunErr          error
+	ExtraErrors     []string
+	Resources       Resources
+	Backend         ExecutionInfo
+	Provenance      string
+	ObservationMode string
+	Completeness    string
+	RedactPaths     []string
 }
 
 func PopulateMetadata(r *Receipt, meta Meta) {
-	r.ExecutionID = executionID(meta.Start, meta.RootPID, meta.Args)
-	r.Timestamp = meta.Start.UTC().Format(time.RFC3339Nano)
-	r.Provenance = meta.Provenance
+	if r.ExecutionID == "" {
+		if meta.ExecutionID != "" {
+			r.ExecutionID = meta.ExecutionID
+		} else {
+			r.ExecutionID = executionID(meta)
+		}
+	}
+	if r.Timestamp == "" {
+		r.Timestamp = meta.Start.UTC().Format(time.RFC3339Nano)
+	}
+	if r.Provenance == "" {
+		r.Provenance = meta.Provenance
+	}
+	if r.StartTime == "" {
+		r.StartTime = formatTime(meta.Start)
+	}
+	if r.EndTime == "" {
+		r.EndTime = formatTime(meta.End)
+	}
+	if r.ObservationMode == "" {
+		mode := meta.ObservationMode
+		if mode == "" {
+			mode = observationModeFromProvenance(meta.Provenance)
+		}
+		r.ObservationMode = mode
+	}
+	if r.Completeness == "" {
+		if meta.Completeness != "" {
+			r.Completeness = meta.Completeness
+		} else {
+			r.Completeness = "closed"
+		}
+	}
 
 	exitCode := r.ExitCode
 	errStr := errorString(meta.RunErr)
@@ -118,14 +155,17 @@ func hasPrefix(value string, prefixes []string) bool {
 	return false
 }
 
-func executionID(start time.Time, pid uint32, cmdArgs []string) string {
-	base := []byte(strings.Join([]string{
-		strconv.FormatInt(start.UnixNano(), 10),
-		strconv.FormatInt(int64(pid), 10),
-		strings.Join(cmdArgs, " "),
-	}, ":"))
-	sum := sha256.Sum256(base)
-	return hex.EncodeToString(sum[:])
+func executionID(meta Meta) string {
+	if meta.ExecutionID != "" {
+		return meta.ExecutionID
+	}
+	if meta.RootPID == 0 {
+		return ""
+	}
+	if meta.RootStartTime != 0 {
+		return identity.FromRoot(meta.RootPID, meta.RootStartTime).String()
+	}
+	return fmt.Sprintf("pid:%d:start:%d", meta.RootPID, meta.Start.UnixNano())
 }
 
 func hashBytes(data []byte) string {

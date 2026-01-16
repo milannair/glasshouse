@@ -24,13 +24,18 @@ func TestReceiptMasking(t *testing.T) {
 
 func TestExecutionIDDeterministic(t *testing.T) {
 	start := time.Unix(1700000000, 1234)
-	args := []string{"/bin/echo", "hello"}
-	first := executionID(start, 100, args)
-	second := executionID(start, 100, args)
+	meta := Meta{
+		Start:         start,
+		RootPID:       100,
+		RootStartTime: 42,
+	}
+	first := executionID(meta)
+	second := executionID(meta)
 	if first != second {
 		t.Fatalf("execution id mismatch: %s vs %s", first, second)
 	}
-	third := executionID(start, 101, args)
+	meta.RootPID = 101
+	third := executionID(meta)
 	if first == third {
 		t.Fatalf("execution id should differ for different pid")
 	}

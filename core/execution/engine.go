@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"glasshouse/core/identity"
 	"glasshouse/core/profiling"
 	"glasshouse/core/receipt"
 )
@@ -52,6 +53,8 @@ func (e Engine) Run(ctx context.Context, spec ExecutionSpec) (ExecutionResult, e
 	var (
 		session        profiling.Session
 		agg            *receipt.Aggregator
+		execID         identity.ExecutionID
+		rootStartTime  uint64
 		aggWG          sync.WaitGroup
 		aggErrors      []string
 		profilingErr   error
@@ -72,14 +75,26 @@ func (e Engine) Run(ctx context.Context, spec ExecutionSpec) (ExecutionResult, e
 			if profilingErr == nil {
 				provenance := e.provenanceFor(spec)
 				agg = receipt.NewAggregator(provenance)
-				agg.SetRoot(uint32(target.RootPID), strings.Join(spec.Args, " "))
+				rootPID := uint32(target.RootPID)
+				rootStart, startErr := identity.ProcessStartTime(rootPID)
+				if startErr != nil {
+					aggErrors = append(aggErrors, fmt.Sprintf("resolve pid start time: %v", startErr))
+				}
+				rootStartTime = rootStart
+				execID = agg.StartExecution(receipt.ExecutionStart{
+					RootPID:         rootPID,
+					RootStartTime:   rootStart,
+					Command:         strings.Join(spec.Args, " "),
+					StartedAt:       result.StartedAt,
+					ObservationMode: observationModeForProfiling(spec.Profiling),
+				})
 				profilingReady = true
 
 				aggWG.Add(1)
 				go func() {
 					defer aggWG.Done()
 					for ev := range session.Events() {
-						agg.HandleEvent(ev)
+						_ = agg.HandleEvent(ev)
 					}
 				}()
 
@@ -123,23 +138,32 @@ func (e Engine) Run(ctx context.Context, spec ExecutionSpec) (ExecutionResult, e
 	resources := ResourcesFromBackend(e.Backend)
 
 	if agg != nil && profilingReady {
-		rec := agg.Receipt(result.ExitCode, result.CompletedAt.Sub(result.StartedAt))
+		agg.EndExecution(execID, result.CompletedAt)
+		rec, ok := agg.FlushExecution(execID, result.ExitCode, result.CompletedAt.Sub(result.StartedAt))
+		if !ok {
+			rec = agg.Receipt(result.ExitCode, result.CompletedAt.Sub(result.StartedAt))
+		}
 		stdoutBytes, stderrBytes := backendOutput(e.Backend)
 		backendInfo := e.metadataForBackend()
 		provenance := e.provenanceFor(spec)
 		meta := receipt.Meta{
-			Start:       result.StartedAt,
-			RootPID:     uint32(rootPID),
-			Args:        spec.Args,
-			Workdir:     spec.Workdir,
-			Stdout:      stdoutBytes,
-			Stderr:      stderrBytes,
-			RunErr:      result.Err,
-			ExtraErrors: extraErrors,
-			Resources:   resources,
-			Backend:     backendInfo,
-			Provenance:  provenance,
-			RedactPaths: spec.ReceiptMask,
+			Start:           result.StartedAt,
+			End:             result.CompletedAt,
+			RootPID:         uint32(rootPID),
+			RootStartTime:   rootStartTime,
+			ExecutionID:     execID.String(),
+			Args:            spec.Args,
+			Workdir:         spec.Workdir,
+			Stdout:          stdoutBytes,
+			Stderr:          stderrBytes,
+			RunErr:          result.Err,
+			ExtraErrors:     extraErrors,
+			Resources:       resources,
+			Backend:         backendInfo,
+			Provenance:      provenance,
+			ObservationMode: observationModeForProfiling(spec.Profiling),
+			Completeness:    "closed",
+			RedactPaths:     spec.ReceiptMask,
 		}
 		receipt.PopulateMetadata(&rec, meta)
 		result.Receipt = &rec
@@ -161,6 +185,17 @@ func (e Engine) validateSpec(spec ExecutionSpec) error {
 
 func (e Engine) provenanceFor(spec ExecutionSpec) string {
 	switch spec.Profiling {
+	case profiling.ProfilingGuest:
+		return "guest"
+	case profiling.ProfilingCombined:
+		return "host+guest"
+	default:
+		return "host"
+	}
+}
+
+func observationModeForProfiling(mode profiling.Mode) string {
+	switch mode {
 	case profiling.ProfilingGuest:
 		return "guest"
 	case profiling.ProfilingCombined:

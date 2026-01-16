@@ -5,6 +5,7 @@
 - Profiling (`core/profiling`) is optional, fail-open, and CO-RE compatible; absence of profiling must not block execution.
 - Receipts (`core/receipt`) are deterministic, versioned, and tied to profiling provenance (host/guest/combined).
 - Control-plane components (`cmd/node-agent`, `node/`) coordinate long-running execution and enforcement; `cmd/guest-probe` is the guest-side hook for VM backends.
+- Daemon mode (`cmd/glasshouse-agent`) attaches eBPF once and aggregates events across multiple executions by execution identity.
 
 Execution lifecycle:
 
@@ -19,3 +20,4 @@ Separation of concerns:
 - Execution vs Observation: execution works with profiling off; observation is additive.
 - Policy vs Enforcement: policy evaluation is deterministic and receipt-driven; enforcement hooks may apply runtime controls but are not required for execution.
 - Core vs Backends: core never references substrate-specific APIs; backends are replaceable without core refactors.
+- Per-run vs daemon: `glasshouse run` executes a single workload end-to-end, while `glasshouse-agent` only observes and aggregates long-lived event streams.

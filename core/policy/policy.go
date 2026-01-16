@@ -15,8 +15,11 @@ type Verdict struct {
 
 // Policy is a declarative, substrate-agnostic rule set.
 type Policy struct {
-	Name  string
-	Rules []Rule
+	Name         string
+	Rules        []Rule
+	PreRules     []PreRule
+	RuntimeRules []RuntimeRule
+	PostRules    []Rule
 }
 
 // Rule models a simple predicate over the receipt.
@@ -32,8 +35,13 @@ type Evaluator struct {
 }
 
 func (e Evaluator) Evaluate(ctx context.Context, r receipt.Receipt) Verdict {
+	_ = ctx
 	reasons := []string{}
-	for _, rule := range e.Policy.Rules {
+	rules := e.Policy.PostRules
+	if len(rules) == 0 {
+		rules = e.Policy.Rules
+	}
+	for _, rule := range rules {
 		if rule.Match == nil {
 			continue
 		}

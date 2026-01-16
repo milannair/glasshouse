@@ -47,6 +47,7 @@ type Event struct {
 	Type       EventType
 	PID        uint32
 	PPID       uint32
+	CgroupID   uint64
 	Flags      uint32
 	Comm       string
 	Path       string
