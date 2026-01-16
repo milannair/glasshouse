@@ -182,6 +182,10 @@ WSL helpers:
 }
 ```
 
+## License
+
+Apache-2.0. See `LICENSE`.
+
 ## Troubleshooting
 
 - `vmlinux.h` missing:
