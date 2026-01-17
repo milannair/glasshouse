@@ -1,10 +1,41 @@
 # Local Deployment
 
-Use this folder for developer setups on a laptop or single VM.
+## Quickstart (Firecracker Server)
 
-- Build the CLI: `go build -o glasshouse ./cmd/glasshouse`.
-- Optional profiling: `./scripts/build-ebpf.sh` (requires `ebpf/vmlinux.h` from `bpftool btf dump ...`) and `sudo` to run.
-- Sandbox-only run (portable): `./glasshouse run --profile disabled -- echo hello`.
-- Profiling run (Linux): `sudo GLASSHOUSE_BPF_DIR=./ebpf/objects ./glasshouse run --profile host -- echo hello`.
-- Node-agent local: `go run ./cmd/node-agent --backend process --profile disabled -- ls`; set `GLASSHOUSE_BPF_DIR` when enabling profiling.
-- Receipts: written to the CWD; use `--profile disabled` to skip receipt emission for quick smoke tests.
+On a Linux VM with nested virtualization:
+
+```bash
+./scripts/quickstart.sh
+sudo ./glasshouse-server
+```
+
+Test:
+```bash
+curl -X POST localhost:8080/run -d '{"code": "print(2+2)"}'
+```
+
+## CLI Mode
+
+Build and run without Firecracker:
+
+```bash
+go build -o glasshouse ./cmd/glasshouse
+./glasshouse run --profile disabled -- echo hello
+```
+
+## Profiling Mode (Linux)
+
+With eBPF profiling enabled:
+
+```bash
+sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h
+./scripts/build-ebpf.sh
+sudo GLASSHOUSE_BPF_DIR=./ebpf/objects ./glasshouse run --profile host -- echo hello
+```
+
+Writes `receipt.json` with syscall/file/network activity.
+
+## Receipts
+
+- Firecracker mode: saved to `/var/lib/glasshouse/receipts/`
+- CLI mode: written to current directory as `receipt.json`

@@ -1,23 +1,48 @@
-# Architecture
+# Architecture (Detailed)
 
-- Core (`core/`) defines execution, receipt, policy, and version grammars without assuming a substrate.
-- Backends (`backend/`) implement the `ExecutionBackend` contract and expose profiling capabilities; process backend today, VM stubs for Firecracker/Kata.
-- Profiling (`core/profiling`) is optional, fail-open, and CO-RE compatible; absence of profiling must not block execution.
-- Receipts (`core/receipt`) are deterministic, versioned, and tied to profiling provenance (host/guest/combined).
-- Control-plane components (`cmd/node-agent`, `node/`) coordinate long-running execution and enforcement; `cmd/guest-probe` is the guest-side hook for VM backends.
-- Daemon mode (`cmd/glasshouse-agent`) attaches eBPF once and aggregates events across multiple executions by execution identity; control is via a simple unix socket (see `scripts/test-agent.sh`).
+See also: [ARCHITECTURE.md](../ARCHITECTURE.md) in the root.
 
-Execution lifecycle:
+## Core Components
 
-1. CLI or node-agent builds an `ExecutionSpec`.
-2. `ExecutionBackend` prepares and starts the workload, returning an identity suitable for profiling attachment.
-3. If profiling is enabled, a profiler attaches (host/guest/combined) and streams events.
-4. Aggregators build receipts; metadata is enriched with backend information and redactions.
-5. Policy evaluation runs on receipts; enforcement, if present, is substrate-specific and optional.
+### Execution Engine (`core/execution`)
 
-Separation of concerns:
+The engine orchestrates backend lifecycle:
+1. Validate spec
+2. Backend Prepare → Start → Wait → Cleanup
+3. Optional profiling attach during Wait
+4. Receipt aggregation
 
-- Execution vs Observation: execution works with profiling off; observation is additive.
-- Policy vs Enforcement: policy evaluation is deterministic and receipt-driven; enforcement hooks may apply runtime controls but are not required for execution.
-- Core vs Backends: core never references substrate-specific APIs; backends are replaceable without core refactors.
-- Per-run vs daemon: `glasshouse run` executes a single workload end-to-end, while `glasshouse-agent` only observes and aggregates long-lived event streams.
+### Backends (`backend/`)
+
+| Backend | Isolation | Description |
+|---------|-----------|-------------|
+| `process` | None | Direct host execution |
+| `firecracker` | VM | Firecracker microVM |
+| `fake` | None | Test mock |
+
+### Profiling (`core/profiling`)
+
+- Optional and fail-open
+- eBPF-based on Linux
+- Captures syscalls, file I/O, network
+
+### Receipts (`core/receipt`)
+
+Structured execution records including:
+- Exit code, timing
+- stdout/stderr hashes
+- Process tree (when profiling enabled)
+
+## Server Mode
+
+`glasshouse-server` handles HTTP requests:
+
+```
+POST /run → Create workspace → Boot VM → Execute → Return result
+```
+
+Each request is isolated in its own Firecracker VM.
+
+## CLI Mode
+
+`glasshouse run` executes directly via process backend with optional eBPF profiling.

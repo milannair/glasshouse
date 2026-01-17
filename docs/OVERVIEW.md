@@ -1,31 +1,42 @@
 # Glasshouse Overview
 
-Glasshouse is a modular sandbox and auditing substrate with optional profiling. Execution, observation, policy evaluation, and enforcement are separate concerns. Receipts are only emitted when profiling is enabled.
+Glasshouse runs code in isolated Firecracker microVMs and produces execution receipts.
 
-Key principles:
+## Primary Use Case
 
-- The OS is the source of truth; observation is orthogonal to execution.
-- Profiling is opt-in, fail-open, and CO-RE compatible; sandbox-only mode must work everywhere.
-- Policy evaluation is deterministic and receipt-driven; enforcement is optional and substrate-specific.
-- Backends are swappable without touching the core semantics.
+Run untrusted Python code via HTTP API:
 
-Execution modes (per the master prompt):
+```bash
+curl -X POST localhost:8080/run -d '{"code": "print(2+2)"}'
+# {"stdout": "4\n", "exit_code": 0, "receipt_id": "..."}
+```
 
-- Sandbox-only (profiling off) for maximum portability.
-- Sandbox + profiling (host/guest/combined) emitting structured receipts.
-- Tool/agent execution with long-running state and subprocess spawning.
-- Mixed-trust chains (agent -> tool -> untrusted code) that preserve boundaries.
-- Future robotics via new backends and policy surfaces without refactoring core.
+Each execution:
+1. Boots a fresh Firecracker microVM
+2. Runs the Python code
+3. Captures stdout/stderr
+4. Saves a receipt
+5. Returns the result
 
-Artifacts:
+## Key Principles
 
-- `core/execution.Engine` orchestrates backends and optional profiling.
-- `core/receipt` defines the receipt grammar and metadata enrichment.
-- `core/policy` evaluates receipts deterministically; enforcement is decoupled.
-- `node/` packages scaffold the control plane and node-agent orchestration.
+- **Isolation**: Each execution runs in a fresh VM
+- **Receipts**: Every execution produces a verifiable record
+- **Simple API**: One endpoint to run code
 
-Quickstart (Linux):
+## Components
 
-- Build eBPF objects: `sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h` then `./scripts/build-ebpf.sh`.
-- Per-run receipt: `go build -o glasshouse ./cmd/glasshouse` and `sudo ./glasshouse run --profile host -- /bin/echo hello`.
-- Daemon receipt: `go build -o glasshouse-agent ./cmd/glasshouse-agent`, start it with a control socket, then run `./scripts/test-agent.sh` to emit a receipt.
+| Component | Purpose |
+|-----------|---------|
+| `glasshouse-server` | HTTP API for Firecracker execution |
+| `glasshouse` CLI | Run commands with optional profiling |
+| `backend/firecracker` | VM lifecycle management |
+| `guest/init` | Guest init that runs Python |
+
+## Quickstart
+
+```bash
+# On GCP VM with nested virt
+./scripts/quickstart.sh
+sudo ./glasshouse-server
+```

@@ -1,7 +1,32 @@
 # Guest Rootfs
 
-Root filesystem build context for guest images.
+Dockerfile and build scripts for the Firecracker guest root filesystem.
 
-- Include only what is required to execute workloads and run the guest probe.
-- Avoid bundling secrets; prefer host-provided mounts for configuration.
-- Keep kernel/userland versions compatible with CO-RE requirements to support optional guest profiling.
+## Building
+
+With Docker:
+```bash
+./scripts/build-rootfs.sh
+```
+
+Without Docker:
+```bash
+./scripts/build-minimal-rootfs.sh
+```
+
+Output: `assets/rootfs.ext4`
+
+## Contents
+
+- Python 3.12 (Alpine-based)
+- Busybox utilities
+- Guest init binary at `/sbin/init`
+- `/workspace` mount point for code execution
+
+## Customization
+
+Edit `guest/rootfs/Dockerfile` to add Python packages:
+
+```dockerfile
+RUN pip install --no-cache-dir numpy pandas
+```

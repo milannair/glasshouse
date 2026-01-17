@@ -1,211 +1,139 @@
-# glasshouse
+# Glasshouse
 
-Auditing-first sandbox for AI agents and tools. Glasshouse runs commands with a pluggable backend, can observe OS-level activity via optional profiling, and emits a versioned receipt only when profiling is enabled.
+Run Python code in Firecracker microVMs with execution receipts.
 
-## Why it exists
+## Quickstart (GCP VM)
 
-Most agents can explain what they intended to do, but not what actually happened on the machine. glasshouse captures what the OS observed: process execs, file opens, and outbound connects. It is a recorder, not an enforcer.
-
-## Features
-
-- Run any command as a child process (sandbox-only by default)
-- Substrate-agnostic execution backend contract (process backend today; Kata/Firecracker stubs)
-- Optional profiling with provenance (host/guest/combined); sandbox mode works without profiling
-- Receipt grammar lives in `core/receipt`; receipts are versioned and redaction-aware
-- Policy evaluation is deterministic and split from enforcement
-- Node-agent and guest-probe scaffolds for control-plane and guest environments
-- Daemon mode (`glasshouse-agent`) attaches eBPF once and aggregates receipts by execution identity
-
-## How it works (short)
-
-1) eBPF programs attach to syscall tracepoints.
-2) Events are written to a ring buffer.
-3) A Go collector decodes events and aggregates them.
-4) The CLI writes a JSON receipt and exits with the child’s exit code.
-
-For a beginner-friendly walkthrough, see `info.md`.
-
-## Requirements (Linux)
-
-- Linux only. WSL is partially supported and may not work depending on kernel/verifier behavior.
-- Linux kernel with BTF enabled (`/sys/kernel/btf/vmlinux`) and ringbuf support (5.8+)
-- Go 1.21+
-- clang/llvm
-- bpftool
-- root or CAP_BPF/CAP_SYS_ADMIN to load eBPF programs
-
-### WSL notes
-
-WSL support is partial:
-- Expected gaps on WSL: argv capture, syscall counts, filesystem reads/writes, network attempts, and child-process events may be missing or empty even when eBPF objects load.
-- Why: WSL uses a Microsoft kernel with stricter eBPF verifier rules and different tracepoint/feature support, so programs may load but event delivery can be incomplete.
-- Practical note: glasshouse is aimed at native Linux; WSL can run the CLI but may not produce a complete receipt.
-
-## Quick start (Linux)
-
-Build eBPF objects:
-
+1. **Create a GCP VM** with nested virtualization:
 ```bash
-sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h
-./scripts/build-ebpf.sh
+gcloud compute instances create glasshouse-vm \
+  --zone=us-central1-a \
+  --machine-type=n2-standard-4 \
+  --min-cpu-platform="Intel Haswell" \
+  --enable-nested-virtualization \
+  --image-family=ubuntu-2204-lts \
+  --image-project=ubuntu-os-cloud
 ```
 
-Per-execution run (receipt.json written on exit):
-
+2. **SSH and run quickstart**:
 ```bash
-go build -o glasshouse ./cmd/glasshouse
-sudo ./glasshouse run --profile host -- /bin/echo hello
+gcloud compute ssh glasshouse-vm --zone=us-central1-a
+
+# Clone and setup
+git clone https://github.com/USER/glasshouse.git
+cd glasshouse
+./scripts/quickstart.sh
+
+# Start server
+sudo ./glasshouse-server
 ```
 
-Daemon mode (observes only, receipts per execution):
-
+3. **Execute Python code**:
 ```bash
-go build -o glasshouse-agent ./cmd/glasshouse-agent
-sudo ./glasshouse-agent start --control-socket /tmp/glasshouse-agent.sock --receipt-dir /tmp/glasshouse-receipts
-./scripts/test-agent.sh
+curl -X POST localhost:8080/run \
+  -H "Content-Type: application/json" \
+  -d '{"code": "print(2+2)"}'
 ```
 
-Node agent (sandbox-only by default):
-
-```bash
-go run ./cmd/node-agent --backend process --profile disabled -- echo hi
+Response:
+```json
+{"stdout": "4\n", "exit_code": 0, "receipt_id": "exec-1234-1"}
 ```
 
-## Build (manual)
+## API
 
-1) Generate `ebpf/vmlinux.h`:
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/run` | POST | Execute Python code |
+| `/receipts/{id}` | GET | Fetch execution receipt |
 
-```bash
-sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h
-```
+### POST /run
 
-2) Compile eBPF programs:
-
-```bash
-./scripts/build-ebpf.sh
-```
-
-3) Build the CLI:
-
-```bash
-go build -o glasshouse ./cmd/glasshouse
-```
-
-## Run
-
-```bash
-sudo ./glasshouse run --profile host -- python3 demo/sneaky.py
-```
-
-Outputs:
-
-- child process stdout/stderr
-- `receipt.json` (only when profiling is enabled)
-
-## Configuration
-
-- `GLASSHOUSE_BPF_DIR`: override the directory containing `exec.o`, `fs.o`, and `net.o`.
-- `GLASSHOUSE_CAPTURE_ARGV=1`: request argv capture (skipped on WSL).
-- `GLASSHOUSE_CAPTURE_ARGV=force`: force argv capture on WSL (may fail verification).
-
-WSL helpers:
-
-- `scripts/run-wsl.sh --capture-argv`
-- `scripts/run-wsl.sh --force-capture-argv`
-
-## Receipt schema (v0.3.0, profiling-on only)
-
+**Request:**
 ```json
 {
-  "version": "v0.3.0",
-  "execution_id": "<stable unique id>",
-  "provenance": "host",
-  "timestamp": "<RFC3339 timestamp>",
-  "outcome": {
-    "exit_code": 0,
-    "signal": null,
-    "error": null
-  },
-  "timing": {
-    "duration_ms": 312,
-    "cpu_time_ms": 3
-  },
-  "process_tree": [
-    {
-      "pid": 123,
-      "ppid": 1,
-      "exe": "/usr/bin/python3",
-      "argv": ["python3", "demo/sneaky.py"],
-      "working_dir": "/work"
-    }
-  ],
-  "filesystem": {
-    "reads": ["/work/input.txt"],
-    "writes": ["/work/output.txt"],
-    "deletes": [],
-    "policy_violations": []
-  },
-  "network": {
-    "attempts": [
-      { "dst": "1.2.3.4:443", "protocol": "tcp", "result": "attempted" }
-    ],
-    "bytes_sent": 0,
-    "bytes_received": 0
-  },
-  "syscalls": {
-    "counts": {},
-    "denied": []
-  },
-  "resources": {
-    "max_rss_kb": 8124,
-    "cpu_time_ms": 3
-  },
-  "environment": {
-    "runtime": "python3.x",
-    "os": "linux",
-    "arch": "amd64",
-    "sandbox": { "network": "enabled" }
-  },
-  "execution": {
-    "backend": "process",
-    "isolation": "none"
-  },
-  "artifacts": {
-    "stdout_hash": "<sha256>",
-    "stderr_hash": "<sha256>"
-  },
-  "exit_code": 0,
-  "duration_ms": 312,
-  "processes": [
-    { "pid": 123, "ppid": 1, "cmd": "python3 demo/sneaky.py" }
-  ]
+  "code": "print('hello')",
+  "timeout": 60
 }
 ```
 
+**Response:**
+```json
+{
+  "stdout": "hello\n",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_ms": 142,
+  "receipt_id": "exec-1234-1"
+}
+```
+
+## Receipts
+
+Every execution produces a receipt saved to `/var/lib/glasshouse/receipts/`:
+
+```json
+{
+  "id": "exec-1234-1",
+  "timestamp": "2026-01-16T18:00:00Z",
+  "code_hash": "abc123",
+  "exit_code": 0,
+  "duration_ms": 142,
+  "stdout": "4\n",
+  "stderr": ""
+}
+```
+
+## Architecture
+
+```
+┌────────────────────────────────────────┐
+│              GCP VM                    │
+│  ┌──────────────────────────────────┐  │
+│  │     glasshouse-server :8080      │  │
+│  └──────────────────────────────────┘  │
+│           │                            │
+│           ▼                            │
+│  ┌──────────────────────────────────┐  │
+│  │      Firecracker microVM         │  │
+│  │  ┌────────────────────────────┐  │  │
+│  │  │    Python execution        │  │  │
+│  │  └────────────────────────────┘  │  │
+│  └──────────────────────────────────┘  │
+│           │                            │
+│           ▼                            │
+│  ┌──────────────────────────────────┐  │
+│  │        Receipt saved             │  │
+│  └──────────────────────────────────┘  │
+└────────────────────────────────────────┘
+```
+
+Each `/run` request:
+1. Boots a fresh Firecracker microVM
+2. Executes the Python code
+3. Captures stdout/stderr
+4. Powers off the VM
+5. Saves a receipt
+6. Returns the result
+
+## Local Development
+
+```bash
+# Build CLI (runs without Firecracker)
+go build -o glasshouse ./cmd/glasshouse
+./glasshouse run --profile disabled -- echo hello
+
+# Build server (requires Firecracker + kernel + rootfs)
+go build -o glasshouse-server ./cmd/glasshouse-server
+```
+
+## Requirements
+
+- Linux x86_64 with KVM (`/dev/kvm`)
+- Go 1.21+
+- Firecracker (installed by quickstart)
+
 ## License
 
-Apache-2.0. See `LICENSE`.
-
-## Troubleshooting
-
-- `vmlinux.h` missing:
-  - `sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > ebpf/vmlinux.h`
-- eBPF verifier errors on WSL:
-  - use default exec capture (no argv) or `GLASSHOUSE_CAPTURE_ARGV=force`
-- no events:
-  - check tracefs is mounted and `ebpf/objects/*.o` exist
-
-## Repository layout (high level)
-
-- `core/`: execution engine, profiling contracts, receipt grammar, policy, training, versioning.
-- `backend/`: execution adapters (process, firecracker stub, kata stub, fake for tests).
-- `cmd/`: CLI, glasshouse-agent daemon, node-agent scaffold, guest-probe scaffold.
-- `node/`: registry, pool, manager, enforcement, and config used by the node-agent.
-- `guest/`: transport/event plumbing and guest init/rootfs notes.
-- `deploy/`: docker/k8s/local deployment guidance.
-- `docs/`: architecture, profiling, policy, receipt schema, and threat model.
-
-## Learn the project
-
-Start with the hands-on tutorial in `info.md`.
-For a system-level overview, see `ARCHITECTURE.md`.
+Apache-2.0
