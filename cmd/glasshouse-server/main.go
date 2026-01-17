@@ -168,7 +168,8 @@ func (s *Server) runHandler(w http.ResponseWriter, r *http.Request) {
 	// Wait for completion
 	log.Println("Waiting for VM to complete...")
 	result, err := s.backend.Wait(handle)
-	log.Printf("VM completed: exit=%d, err=%v", result.ExitCode, result.Err)
+	log.Printf("VM completed: exit=%d, stdout=%q, stderr=%q, err=%v",
+		result.ExitCode, result.Stdout, result.Stderr, result.Err)
 
 	// Build response
 	resp := RunResponse{
@@ -184,7 +185,8 @@ func (s *Server) runHandler(w http.ResponseWriter, r *http.Request) {
 		resp.Error = result.Err.Error()
 	}
 
-	log.Printf("Response: stdout=%q, stderr=%q, exit=%d", resp.Stdout, resp.Stderr, resp.ExitCode)
+	log.Printf("Built response: stdout=%q, stderr=%q, exit=%d, error=%q",
+		resp.Stdout, resp.Stderr, resp.ExitCode, resp.Error)
 
 	// Save receipt
 	receipt := map[string]interface{}{
@@ -197,10 +199,15 @@ func (s *Server) runHandler(w http.ResponseWriter, r *http.Request) {
 		"stderr":      resp.Stderr,
 		"error":       resp.Error,
 	}
+	log.Printf("Saving receipt: %s", receiptID)
 	s.saveReceipt(receiptID, receipt)
 
+	log.Printf("Sending JSON response...")
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("ERROR encoding response: %v", err)
+	}
+	log.Printf("Response sent successfully")
 }
 
 func (s *Server) receiptHandler(w http.ResponseWriter, r *http.Request) {
