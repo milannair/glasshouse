@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -99,6 +100,9 @@ func main() {
 }
 
 func mustMount(source, target, fstype string) {
+	if isMounted(target) {
+		return
+	}
 	if err := os.MkdirAll(target, 0755); err != nil {
 		log("mkdir " + target + ": " + err.Error())
 		return
@@ -106,6 +110,23 @@ func mustMount(source, target, fstype string) {
 	if err := syscall.Mount(source, target, fstype, 0, ""); err != nil {
 		log("mount " + target + ": " + err.Error())
 	}
+}
+
+func isMounted(target string) bool {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 5 && fields[4] == target {
+			return true
+		}
+	}
+	return false
 }
 
 func writeResult(r Result) {
