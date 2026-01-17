@@ -1,7 +1,32 @@
 # Guest Init
 
-Boot-time hooks for guest images used by VM-style backends.
+Go binary that runs as PID 1 inside Firecracker microVMs.
 
-- Provision the guest user, SSH keys (if any), and minimal tooling required by `cmd/guest-probe`.
-- Ensure BPF filesystem and proc/sys mounts are available when guest-side profiling is enabled.
-- Keep this minimal and deterministic; policy enforcement lives on the host/control plane.
+## What It Does
+
+1. Mounts `/proc`, `/sys`, `/dev`
+2. Mounts workspace from `/dev/vdb` to `/workspace`
+3. Reads Python code from `/workspace/.pending/code.py`
+4. Executes `python3 -c <code>`
+5. Writes result to `/workspace/.pending/result.json`
+6. Powers off the VM
+
+## Building
+
+The init binary is built as part of `scripts/build-rootfs.sh`:
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o guest-init ./guest/init/
+```
+
+## Result Format
+
+```json
+{
+  "stdout": "...",
+  "stderr": "...",
+  "exit_code": 0,
+  "duration_ms": 142,
+  "error": ""
+}
+```

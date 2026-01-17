@@ -1,5 +1,6 @@
 # Binaries
 /glasshouse
+/glasshouse-agent
 *.o
 *.so
 *.exe
@@ -8,6 +9,7 @@
 ebpf/objects/
 ebpf/vmlinux.h
 receipt-expected.json
+receipt.json
 
 # Go
 *.test

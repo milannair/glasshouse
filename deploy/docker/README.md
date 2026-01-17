@@ -1,15 +1,45 @@
 # Docker Deployment
 
-This directory holds Docker tooling to run Glasshouse on a single host.
+## Building the Server Image
 
-- Build steps (host):
-  1) `go build -o glasshouse ./cmd/glasshouse`
-  2) (optional) `./scripts/build-ebpf.sh` to populate `ebpf/objects` and `ebpf/vmlinux.h`
-  3) Package binaries and `ebpf/*` into an image; keep the image minimal (scratch/distroless acceptable for sandbox-only).
-- Run (sandbox-only):
-  - `docker run --rm -v $(pwd):/work gh/glasshouse ./glasshouse run --profile disabled -- ls`
-- Run with profiling (Linux host with BPF privileges):
-  - `docker run --rm --pid=host --privileged -v /sys/fs/bpf:/sys/fs/bpf -v $(pwd)/ebpf:/app/ebpf gh/glasshouse ./glasshouse run --profile host -- cmd`
-- Receipts: written to the container CWD (`/work` in examples); mount a host path with `-v` to persist receipts.
-- Backends: use `process` inside containers. VM backends need nested virtualization and are out of scope for this profile.
-- Hardening tips: drop ambient capabilities when profiling is disabled; use read-only rootfs and limited volumes for sandbox-only runs.
+```dockerfile
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY . .
+RUN go build -o glasshouse-server ./cmd/glasshouse-server
+
+FROM alpine:latest
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /app/glasshouse-server /usr/local/bin/
+COPY --from=builder /app/assets /assets
+ENTRYPOINT ["glasshouse-server"]
+```
+
+## Running
+
+The server requires:
+- `/dev/kvm` access (nested virtualization)
+- Kernel and rootfs in `/assets/`
+
+```bash
+docker run --rm \
+  --device /dev/kvm \
+  -v /path/to/kernel:/assets/vmlinux.bin \
+  -v /path/to/rootfs:/assets/rootfs.ext4 \
+  -v /var/lib/glasshouse/receipts:/var/lib/glasshouse/receipts \
+  -p 8080:8080 \
+  glasshouse-server
+```
+
+## CLI Mode (No Firecracker)
+
+For sandbox-only execution without Firecracker:
+
+```bash
+docker run --rm -v $(pwd):/work glasshouse ./glasshouse run --profile disabled -- ls
+```
+
+## Notes
+
+- VM backends require KVM access and nested virtualization
+- Receipts should be persisted via volume mount

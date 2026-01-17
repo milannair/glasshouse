@@ -1,59 +1,75 @@
 # Glasshouse Architecture
 
-> Updated for the modular core: execution, profiling, policy, and receipts live in `core/`. Backends implement `ExecutionBackend` and profiling is optional and fail-open. Receipts are emitted only when profiling is enabled.
-
 ## Overview
-Glasshouse runs a command, observes its host-side activity through the kernel, and emits a single execution receipt (`receipt.json`). The core runtime flow is:
 
-1) CLI parses arguments and selects a backend.
-2) The execution engine orchestrates the backend lifecycle and optional audit collection.
-3) eBPF programs emit events into a ring buffer when profiling is enabled.
-4) The collector decodes events and the aggregator builds a receipt.
+Glasshouse runs code in isolated environments and produces execution receipts. Two primary modes:
 
-Glasshouse is an observer, not an enforcer. It reports what the OS observed rather than what the workload claims to have done.
+1. **Firecracker Server**: HTTP API that runs Python in microVMs
+2. **CLI with Profiling**: Run any command with optional eBPF-based observation
 
-## Execution Engine Role
-The engine is the orchestrator. It:
+## Execution Flow (Firecracker Server)
 
-- Calls the backend lifecycle in order: Prepare -> Start -> Wait -> Cleanup.
-- Starts optional profiling and feeds events into the aggregator.
-- Builds the receipt, including process tree, filesystem/network activity, syscalls, artifacts, and execution metadata (only when profiling is enabled).
-- Exits with the child exit code; receipt emission depends on profiling settings.
+```
+HTTP POST /run {"code": "..."}
+        │
+        ▼
+┌─────────────────────────────────┐
+│     glasshouse-server           │
+│  1. Create workspace image      │
+│  2. Boot Firecracker VM         │
+│  3. Wait for completion         │
+│  4. Read result from workspace  │
+│  5. Save receipt                │
+└─────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────┐
+│      Firecracker microVM        │
+│  guest-init (PID 1):            │
+│  - Mount /workspace             │
+│  - Read code.py                 │
+│  - python3 -c <code>            │
+│  - Write result.json            │
+│  - poweroff                     │
+└─────────────────────────────────┘
+```
 
-The engine does not contain backend-specific logic. It only interacts with backends through the `ExecutionBackend` interface and optional data providers for receipt enrichment.
+## Backend Interface
 
-## Backend Role
-Backends encapsulate how a workload is executed. Each backend is responsible for:
+All backends implement `ExecutionBackend`:
 
-- Preparing the execution environment (if required).
-- Starting the workload and returning the root PID for aggregation.
-- Waiting for completion and returning the exit code.
-- Cleaning up any backend resources.
-- Reporting execution metadata (`backend` and `isolation`).
+```go
+type ExecutionBackend interface {
+    Name() string
+    Prepare(ctx context.Context) error
+    Start(spec ExecutionSpec) (ExecutionHandle, error)
+    Wait(h ExecutionHandle) (ExecutionResult, error)
+    Kill(h ExecutionHandle) error
+    Cleanup(h ExecutionHandle) error
+}
+```
 
-The default process backend executes a host process and preserves sandbox-only behavior. Future VM backends (Firecracker, Kata) will implement the same interface without changing the engine.
+### Available Backends
 
-## Host-Side Observability Model
-Glasshouse observes host kernel activity using eBPF tracepoints. This design keeps the workload unmodified:
+| Backend | Isolation | Use Case |
+|---------|-----------|----------|
+| `process` | None | CLI, direct execution |
+| `firecracker` | VM | API server, untrusted code |
 
-- No guest-side instrumentation is required.
-- The host kernel is the single source of truth for process, file, and network activity.
-- The collector and aggregator are decoupled from execution mode.
+## Receipt Pipeline
 
-This approach is stable across execution backends because the observation layer is anchored in the host OS rather than the workload runtime.
+When profiling is enabled (CLI mode), the execution engine:
 
-## Why Kernel Observation (Not Workload Instrumentation)
-Instrumenting workloads adds complexity, requires cooperation from the target process, and can be bypassed or disabled. Kernel observation provides:
+1. Attaches eBPF programs to syscall tracepoints
+2. Collects events into a ring buffer
+3. Aggregates events into a receipt
+4. Writes `receipt.json` on exit
 
-- Uniform coverage across languages and runtimes.
-- Minimal operational burden on the workload.
-- A consistent, host-verifiable record of activity.
+Firecracker mode produces simpler receipts with stdout/stderr, exit code, and timing.
 
-## Future VM Backends (Firecracker/Kata)
-VM backends will fit into the same architecture by implementing the backend interface:
+## Design Principles
 
-- The backend will manage VM lifecycle and report a root PID that represents the host-side process tree to observe (e.g., the VM monitor process).
-- The engine and receipt pipeline remain unchanged.
-- The receipt will include `execution.backend = "firecracker"` and `execution.isolation = "vm"` to make isolation mode explicit.
-
-This preserves a stable core while enabling new execution environments without changing collector or aggregation logic.
+- **Backends are swappable**: Same interface, different isolation
+- **Profiling is optional**: Fail-open, not required for basic execution
+- **Receipts are immutable**: Hash-protected, timestamped records
+- **Guest is minimal**: Only what's needed to run code and report results
