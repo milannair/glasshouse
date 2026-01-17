@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # build-minimal-rootfs.sh - Create a minimal rootfs without Docker
-# Fallback for environments without Docker
+# Downloads Alpine mini rootfs and adds Python
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -10,44 +10,34 @@ OUTPUT_DIR="$ROOT_DIR/assets"
 
 mkdir -p "$OUTPUT_DIR"
 
-echo "Creating minimal rootfs with busybox and Python..."
+echo "Creating Alpine rootfs with Python..."
 
 ROOTFS_PATH="$OUTPUT_DIR/rootfs.ext4"
-ROOTFS_SIZE_MB=256
+ROOTFS_SIZE_MB=512
 
 # Create ext4 image
 dd if=/dev/zero of="$ROOTFS_PATH" bs=1M count=$ROOTFS_SIZE_MB status=progress
 mkfs.ext4 -F "$ROOTFS_PATH"
 
-# Mount and populate
+# Mount
 MNT=$(mktemp -d)
 sudo mount "$ROOTFS_PATH" "$MNT"
 
-# Create basic structure
-sudo mkdir -p "$MNT"/{bin,sbin,proc,sys,dev,tmp,workspace,usr/bin,usr/lib}
+# Download Alpine mini rootfs
+ALPINE_VERSION="3.19"
+ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}.0-x86_64.tar.gz"
+echo "Downloading Alpine ${ALPINE_VERSION} mini rootfs..."
+curl -fsSL "$ALPINE_URL" | sudo tar -xz -C "$MNT"
 
-# Copy busybox
-sudo cp /bin/busybox "$MNT/bin/busybox"
-sudo chmod +x "$MNT/bin/busybox"
+# Configure Alpine for chroot
+sudo cp /etc/resolv.conf "$MNT/etc/resolv.conf"
 
-# Create symlinks for common utilities
-for cmd in sh cat echo ls mkdir mount poweroff; do
-    sudo ln -sf /bin/busybox "$MNT/bin/$cmd"
-done
-sudo ln -sf /bin/busybox "$MNT/sbin/poweroff"
+# Install Python in chroot
+echo "Installing Python..."
+sudo chroot "$MNT" /bin/sh -c "apk add --no-cache python3"
 
-# Check for Python and copy it
-if command -v python3 &>/dev/null; then
-    PYTHON_BIN=$(which python3)
-    sudo cp "$PYTHON_BIN" "$MNT/usr/bin/python3"
-    sudo chmod +x "$MNT/usr/bin/python3"
-    
-    # Copy Python libraries (basic)
-    PYTHON_LIB=$(python3 -c "import sys; print(sys.prefix)")/lib
-    if [[ -d "$PYTHON_LIB" ]]; then
-        sudo cp -r "$PYTHON_LIB"/python* "$MNT/usr/lib/" 2>/dev/null || true
-    fi
-fi
+# Create workspace directory
+sudo mkdir -p "$MNT/workspace"
 
 # Build guest init
 echo "Building guest init..."
@@ -58,7 +48,10 @@ sudo cp "$INIT_TMP" "$MNT/sbin/init"
 sudo chmod +x "$MNT/sbin/init"
 rm "$INIT_TMP"
 
+# Cleanup
+sudo rm -f "$MNT/etc/resolv.conf"
 sudo umount "$MNT"
 rmdir "$MNT"
 
-echo "Minimal rootfs created at: $ROOTFS_PATH"
+echo "Rootfs created at: $ROOTFS_PATH"
+echo "Size: $(du -h "$ROOTFS_PATH" | cut -f1)"
