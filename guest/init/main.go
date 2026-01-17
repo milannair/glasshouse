@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -46,30 +47,51 @@ func main() {
 		poweroff()
 		return
 	}
-	log("executing code")
+	log("code: " + string(codeBytes))
+
+	// Find Python - try common paths
+	pythonPath := ""
+	for _, p := range []string{"/usr/bin/python3", "/usr/bin/python", "/bin/python3", "/bin/python"} {
+		if _, err := os.Stat(p); err == nil {
+			pythonPath = p
+			break
+		}
+	}
+	if pythonPath == "" {
+		log("ERROR: Python not found in common paths")
+		writeResult(Result{Error: "python not found", ExitCode: 1})
+		poweroff()
+		return
+	}
+	log("using python: " + pythonPath)
 
 	// Execute Python
 	start := time.Now()
-	cmd := exec.Command("python3", "-c", string(codeBytes))
+	cmd := exec.Command(pythonPath, "-c", string(codeBytes))
 	cmd.Dir = "/workspace"
 
-	stdout, err := cmd.Output()
+	var stdoutBuf, stderrBuf bytes.Buffer
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stderrBuf
+
+	err = cmd.Run()
 	duration := time.Since(start)
 
 	result := Result{
 		DurationMs: duration.Milliseconds(),
+		Stdout:     stdoutBuf.String(),
+		Stderr:     stderrBuf.String(),
 	}
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			result.ExitCode = exitErr.ExitCode()
-			result.Stderr = string(exitErr.Stderr)
 		} else {
 			result.ExitCode = 1
 			result.Error = err.Error()
 		}
+		log("python error: " + result.Stderr)
 	}
-	result.Stdout = string(stdout)
 
 	log(fmt.Sprintf("execution complete, exit_code=%d, duration=%dms", result.ExitCode, result.DurationMs))
 	writeResult(result)

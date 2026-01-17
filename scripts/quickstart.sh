@@ -3,7 +3,7 @@ set -euo pipefail
 
 # quickstart.sh - One-command setup for Glasshouse Firecracker sandbox
 #
-# Usage: curl -fsSL https://raw.githubusercontent.com/USER/glasshouse/main/scripts/quickstart.sh | bash
+# Usage: git clone ... && cd glasshouse && ./scripts/quickstart.sh
 
 echo "=== Glasshouse Quickstart ==="
 echo ""
@@ -22,30 +22,30 @@ if [[ ! -e /dev/kvm ]]; then
     exit 1
 fi
 
-# Check KVM access
+echo "[1/6] Installing system dependencies..."
+sudo apt-get update -qq
+sudo apt-get install -y -qq curl wget git make
+
+# Check KVM access - add to group and use sg to continue in same session
 if [[ ! -r /dev/kvm ]] || [[ ! -w /dev/kvm ]]; then
     echo "Adding user to kvm group..."
     sudo usermod -aG kvm "$USER"
-    echo "Please log out and back in, then re-run this script"
-    exit 1
+    echo "Re-running script with kvm group..."
+    exec sg kvm -c "$0"
 fi
 
-echo "[1/5] Checking dependencies..."
-
-# Install Go if needed
+echo "[2/6] Installing Go..."
 if ! command -v go &>/dev/null; then
-    echo "Installing Go..."
     wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz
     sudo rm -rf /usr/local/go
     sudo tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz
     rm go1.21.5.linux-amd64.tar.gz
-    export PATH=$PATH:/usr/local/go/bin
-    echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 fi
+export PATH=$PATH:/usr/local/go/bin
+echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 
-# Install Firecracker if needed
+echo "[3/6] Installing Firecracker..."
 if ! command -v firecracker &>/dev/null; then
-    echo "Installing Firecracker v1.7.0..."
     FC_VERSION="v1.7.0"
     curl -fsSL -o /tmp/firecracker.tgz \
         "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-x86_64.tgz"
@@ -55,28 +55,25 @@ if ! command -v firecracker &>/dev/null; then
     rm /tmp/firecracker.tgz
 fi
 
-echo "[2/5] Downloading kernel..."
+echo "[4/6] Downloading kernel..."
 mkdir -p assets
 if [[ ! -f assets/vmlinux.bin ]]; then
     curl -fsSL -o assets/vmlinux.bin \
         https://s3.amazonaws.com/spec.ccfc.min/img/hello/kernel/hello-vmlinux.bin
 fi
 
-echo "[3/5] Building rootfs..."
+echo "[5/6] Building rootfs..."
 if [[ ! -f assets/rootfs.ext4 ]]; then
     if command -v docker &>/dev/null; then
         ./scripts/build-rootfs.sh
     else
-        echo "Docker not found - downloading pre-built rootfs..."
-        # Fallback: create minimal busybox rootfs
         ./scripts/build-minimal-rootfs.sh
     fi
 fi
 
-echo "[4/5] Building glasshouse-server..."
+echo "[6/6] Building glasshouse-server..."
 go build -o glasshouse-server ./cmd/glasshouse-server
 
-echo "[5/5] Creating receipt directory..."
 sudo mkdir -p /var/lib/glasshouse/receipts
 sudo chown "$USER:$USER" /var/lib/glasshouse/receipts
 
