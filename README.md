@@ -8,8 +8,7 @@ Run Python code in Firecracker microVMs with execution receipts.
 ```bash
 gcloud compute instances create glasshouse-vm \
   --zone=us-central1-a \
-  --machine-type=n2-standard-4 \
-  --min-cpu-platform="Intel Haswell" \
+  --machine-type=n2-standard-2 \
   --enable-nested-virtualization \
   --image-family=ubuntu-2204-lts \
   --image-project=ubuntu-os-cloud
