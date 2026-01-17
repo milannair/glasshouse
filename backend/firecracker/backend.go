@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -174,8 +175,10 @@ func (b *Backend) Wait(h execution.ExecutionHandle) (execution.ExecutionResult, 
 	}
 
 	// Wait for Firecracker process to exit (guest powers off)
+	log.Println("[firecracker] waiting for VM process to exit...")
 	err := vm.fcProcess.Wait()
 	completedAt := time.Now()
+	log.Printf("[firecracker] VM process exited (err=%v)", err)
 
 	result := execution.ExecutionResult{
 		Handle:      h,
@@ -185,14 +188,19 @@ func (b *Backend) Wait(h execution.ExecutionHandle) (execution.ExecutionResult, 
 
 	// Read result from workspace
 	resultPath := filepath.Join(vm.workspacePath, "workspace.ext4")
+	log.Printf("[firecracker] reading result from %s", resultPath)
 	guestResult, readErr := readResultFromImage(resultPath)
 	if readErr != nil {
+		log.Printf("[firecracker] read error: %v", readErr)
 		result.ExitCode = 1
 		result.Err = fmt.Errorf("read result: %w (process err: %v)", readErr, err)
 		return result, nil
 	}
+	log.Printf("[firecracker] got result: exit=%d, stdout=%q", guestResult.ExitCode, guestResult.Stdout)
 
 	result.ExitCode = guestResult.ExitCode
+	result.Stdout = guestResult.Stdout
+	result.Stderr = guestResult.Stderr
 	if guestResult.Error != "" {
 		result.Err = fmt.Errorf("guest error: %s", guestResult.Error)
 	}

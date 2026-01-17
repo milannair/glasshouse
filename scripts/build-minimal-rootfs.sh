@@ -47,8 +47,9 @@ sudo rm -rf "$MNT/etc/inittab" 2>/dev/null || true
 # Build guest init
 echo "Building guest init..."
 cd "$ROOT_DIR"
-INIT_TMP=$(mktemp)
+INIT_TMP=$(mktemp /tmp/guest-init.XXXXXX)
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$INIT_TMP" ./guest/init/
+sudo mkdir -p "$MNT/sbin"
 sudo cp "$INIT_TMP" "$MNT/sbin/init"
 sudo chmod +x "$MNT/sbin/init"
 rm "$INIT_TMP"

@@ -47,6 +47,8 @@ type ExecutionResult struct {
 	Err               error
 	StartedAt         time.Time
 	CompletedAt       time.Time
+	Stdout            string // Captured stdout (Firecracker backend)
+	Stderr            string // Captured stderr (Firecracker backend)
 	ProfilingEnabled  bool
 	ProfilingAttached bool
 	ProfilingError    error

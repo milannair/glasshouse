@@ -166,19 +166,25 @@ func (s *Server) runHandler(w http.ResponseWriter, r *http.Request) {
 	defer s.backend.Cleanup(handle)
 
 	// Wait for completion
+	log.Println("Waiting for VM to complete...")
 	result, err := s.backend.Wait(handle)
+	log.Printf("VM completed: exit=%d, err=%v", result.ExitCode, result.Err)
 
 	// Build response
 	resp := RunResponse{
 		ExitCode:   result.ExitCode,
 		DurationMs: result.CompletedAt.Sub(result.StartedAt).Milliseconds(),
 		ReceiptID:  receiptID,
+		Stdout:     result.Stdout,
+		Stderr:     result.Stderr,
 	}
 
 	// Read stdout/stderr from guest result
 	if result.Err != nil {
 		resp.Error = result.Err.Error()
 	}
+
+	log.Printf("Response: stdout=%q, stderr=%q, exit=%d", resp.Stdout, resp.Stderr, resp.ExitCode)
 
 	// Save receipt
 	receipt := map[string]interface{}{

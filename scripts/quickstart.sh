@@ -74,8 +74,8 @@ if [[ ! -r /dev/kvm ]] || [[ ! -w /dev/kvm ]]; then
 fi
 
 echo "[2/6] Installing Go..."
-GO_VERSION="1.21.5"
-GO_MIN_VERSION="1.21.0"
+GO_VERSION="1.23.5"
+GO_MIN_VERSION="1.23.0"
 NEED_GO="true"
 if have_command go; then
     INSTALLED_GO="$(go version | awk '{print $3}' | sed 's/^go//')"

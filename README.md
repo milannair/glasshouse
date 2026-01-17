@@ -130,7 +130,7 @@ go build -o glasshouse-server ./cmd/glasshouse-server
 ## Requirements
 
 - Linux x86_64 with KVM (`/dev/kvm`)
-- Go 1.21+
+- Go 1.23+
 - Firecracker (installed by quickstart)
 
 ## License
