@@ -45,8 +45,8 @@ fi
 
 # Install Firecracker if needed
 if ! command -v firecracker &>/dev/null; then
-    echo "Installing Firecracker v1.5.0..."
-    FC_VERSION="v1.5.0"
+    echo "Installing Firecracker v1.7.0..."
+    FC_VERSION="v1.7.0"
     curl -fsSL -o /tmp/firecracker.tgz \
         "https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-x86_64.tgz"
     sudo tar -xzf /tmp/firecracker.tgz -C /usr/local/bin --strip-components=1 \

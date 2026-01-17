@@ -52,7 +52,11 @@ fi
 # Build guest init
 echo "Building guest init..."
 cd "$ROOT_DIR"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$MNT/sbin/init" ./guest/init/
+INIT_TMP=$(mktemp)
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$INIT_TMP" ./guest/init/
+sudo cp "$INIT_TMP" "$MNT/sbin/init"
+sudo chmod +x "$MNT/sbin/init"
+rm "$INIT_TMP"
 
 sudo umount "$MNT"
 rmdir "$MNT"
