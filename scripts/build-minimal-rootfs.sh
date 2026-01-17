@@ -21,7 +21,7 @@ mkfs.ext4 -F "$ROOTFS_PATH"
 
 # Mount
 MNT=$(mktemp -d)
-sudo mount "$ROOTFS_PATH" "$MNT"
+sudo mount -o loop "$ROOTFS_PATH" "$MNT"
 
 # Download Alpine mini rootfs
 ALPINE_VERSION="3.19"

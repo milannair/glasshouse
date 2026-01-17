@@ -33,7 +33,7 @@ mkfs.ext4 -F "$ROOTFS_PATH"
 # Mount and extract
 echo "Extracting to ext4..."
 MNT=$(mktemp -d)
-sudo mount "$ROOTFS_PATH" "$MNT"
+sudo mount -o loop "$ROOTFS_PATH" "$MNT"
 sudo tar -xf "$OUTPUT_DIR/rootfs.tar" -C "$MNT"
 sudo umount "$MNT"
 rmdir "$MNT"

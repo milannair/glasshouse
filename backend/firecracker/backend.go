@@ -35,6 +35,14 @@ func (b *Backend) Prepare(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("firecracker backend requires root (for mount/umount)")
+	}
+	for _, cmd := range []string{"mkfs.ext4", "mount", "umount"} {
+		if _, err := exec.LookPath(cmd); err != nil {
+			return fmt.Errorf("missing %s (install e2fsprogs/util-linux)", cmd)
+		}
+	}
 	return b.cfg.Validate()
 }
 
@@ -110,7 +118,7 @@ func (b *Backend) Start(spec execution.ExecutionSpec) (execution.ExecutionHandle
 	// Boot source
 	if err := apiPut(client, socketPath, "/boot-source", map[string]interface{}{
 		"kernel_image_path": b.cfg.KernelImagePath,
-		"boot_args":         "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/sbin/init",
+		"boot_args":         "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw init=/sbin/init quiet loglevel=3",
 	}); err != nil {
 		fcCmd.Process.Kill()
 		return execution.ExecutionHandle{}, fmt.Errorf("set boot source: %w", err)
@@ -282,15 +290,15 @@ func createWorkspaceImage(path string, sourceDir string) error {
 	}
 	defer os.RemoveAll(mnt)
 
-	if out, err := exec.Command("sudo", "mount", path, mnt).CombinedOutput(); err != nil {
-		return fmt.Errorf("mount: %w: %s", err, out)
+	if err := mountImage(path, mnt, false); err != nil {
+		return err
 	}
-	defer exec.Command("sudo", "umount", mnt).Run()
+	defer umount(mnt)
 
 	// Copy .pending directory
 	pendingSrc := filepath.Join(sourceDir, ".pending")
 	pendingDst := filepath.Join(mnt, ".pending")
-	if out, err := exec.Command("sudo", "cp", "-r", pendingSrc, pendingDst).CombinedOutput(); err != nil {
+	if out, err := exec.Command("cp", "-r", pendingSrc, pendingDst).CombinedOutput(); err != nil {
 		return fmt.Errorf("copy pending: %w: %s", err, out)
 	}
 
@@ -304,10 +312,10 @@ func readResultFromImage(imagePath string) (*GuestResult, error) {
 	}
 	defer os.RemoveAll(mnt)
 
-	if out, err := exec.Command("sudo", "mount", imagePath, mnt).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("mount: %w: %s", err, out)
+	if err := mountImage(imagePath, mnt, true); err != nil {
+		return nil, err
 	}
-	defer exec.Command("sudo", "umount", mnt).Run()
+	defer umount(mnt)
 
 	resultPath := filepath.Join(mnt, ".pending", "result.json")
 	data, err := os.ReadFile(resultPath)
@@ -373,6 +381,21 @@ func apiPut(client *http.Client, socketPath, path string, body interface{}) erro
 	}
 
 	return nil
+}
+
+func mountImage(imagePath, mountPoint string, readOnly bool) error {
+	opts := "loop"
+	if readOnly {
+		opts = "loop,ro"
+	}
+	if out, err := exec.Command("mount", "-o", opts, imagePath, mountPoint).CombinedOutput(); err != nil {
+		return fmt.Errorf("mount: %w: %s", err, out)
+	}
+	return nil
+}
+
+func umount(mountPoint string) {
+	_ = exec.Command("umount", mountPoint).Run()
 }
 
 var _ execution.ExecutionBackend = (*Backend)(nil)
