@@ -39,6 +39,11 @@ sudo chroot "$MNT" /bin/sh -c "apk add --no-cache python3"
 # Create workspace directory
 sudo mkdir -p "$MNT/workspace"
 
+# Remove Alpine's init system - we use our own
+sudo rm -f "$MNT/sbin/init" 2>/dev/null || true
+sudo rm -rf "$MNT/etc/init.d" 2>/dev/null || true
+sudo rm -rf "$MNT/etc/inittab" 2>/dev/null || true
+
 # Build guest init
 echo "Building guest init..."
 cd "$ROOT_DIR"
@@ -47,6 +52,10 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "$INIT_TMP" .
 sudo cp "$INIT_TMP" "$MNT/sbin/init"
 sudo chmod +x "$MNT/sbin/init"
 rm "$INIT_TMP"
+
+# Verify init is our binary
+echo "Verifying init binary..."
+file "$MNT/sbin/init" || sudo file "$MNT/sbin/init"
 
 # Cleanup
 sudo rm -f "$MNT/etc/resolv.conf"
